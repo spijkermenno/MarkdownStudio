@@ -1,0 +1,293 @@
+import AppKit
+import Observation
+import SwiftUI
+import UniformTypeIdentifiers
+import WebKit
+
+enum SlideSeparator: String, CaseIterable, Identifiable {
+    case automatic = "auto", rule, heading
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .rule: "Horizontal rules (---)"
+        case .heading: "Headings (# and ##)"
+        }
+    }
+}
+
+/// State shown in the presenter window.
+@Observable
+final class PresentationState {
+    var index = 0
+    var count = 0
+    var notes = ""
+    var title = ""
+    var nextTitle = ""
+    var startedAt = Date()
+}
+
+/// Loads `Web/slides.html` in a web view and talks to `MDSlides`.
+final class SlidesWebView: NSObject, WKScriptMessageHandler {
+    let webView: WKWebView
+    private let schemeHandler = PreviewSchemeHandler()
+    private var readyWaiters: [CheckedContinuation<Void, Never>] = []
+    private var isReady = false
+    var onSlide: (([String: Any]) -> Void)?
+    var onExit: (() -> Void)?
+
+    init(documentDirectory: URL?) {
+        let config = WKWebViewConfiguration()
+        config.setURLSchemeHandler(schemeHandler, forURLScheme: PreviewSchemeHandler.scheme)
+        config.preferences.shouldPrintBackgrounds = true
+        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 720), configuration: config)
+        super.init()
+        schemeHandler.documentDirectory = documentDirectory
+        config.userContentController.add(WeakSlidesHandler(self), name: "slides")
+        webView.load(URLRequest(url: URL(string: "mdstudio://app/slides.html")!))
+    }
+
+    func load(_ markdown: String, options: [String: Any]) async -> Int {
+        if !isReady { await withCheckedContinuation { readyWaiters.append($0) } }
+        return await withCheckedContinuation { continuation in
+            webView.callAsyncJavaScript("return await MDSlides.load(markdown, options)",
+                                        arguments: ["markdown": markdown, "options": options],
+                                        in: nil, in: .page) { result in
+                continuation.resume(returning: (try? result.get()) as? Int ?? 0)
+            }
+        }
+    }
+
+    func run(_ script: String) {
+        webView.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        switch type {
+        case "ready":
+            isReady = true
+            readyWaiters.forEach { $0.resume() }
+            readyWaiters.removeAll()
+        case "slide": onSlide?(body)
+        case "exit": onExit?()
+        default: break
+        }
+    }
+}
+
+private final class WeakSlidesHandler: NSObject, WKScriptMessageHandler {
+    weak var target: SlidesWebView?
+    init(_ target: SlidesWebView) { self.target = target }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(controller, didReceive: message)
+    }
+}
+
+/// A borderless window that can take keyboard focus.
+private final class SlideWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    var onEscape: (() -> Void)?
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
+}
+
+/// Runs a presentation: slides full screen, plus a presenter window with
+/// notes and a timer on the other display when there are two.
+final class PresentationController {
+    static private(set) var current: PresentationController?
+
+    private let slides: SlidesWebView
+    private let state = PresentationState()
+    private var slideWindow: SlideWindow?
+    private var presenterWindow: NSWindow?
+    private var previousOptions: NSApplication.PresentationOptions = []
+
+    private init(documentDirectory: URL?) {
+        slides = SlidesWebView(documentDirectory: documentDirectory)
+    }
+
+    static func start(markdown: String, documentURL: URL?, configuration: PreviewConfiguration,
+                      separator: SlideSeparator, from window: NSWindow?) {
+        current?.stop()
+        let controller = PresentationController(documentDirectory: documentURL?.deletingLastPathComponent())
+        current = controller
+        controller.present(markdown: markdown, configuration: configuration, separator: separator, from: window)
+    }
+
+    private func present(markdown: String, configuration: PreviewConfiguration, separator: SlideSeparator, from window: NSWindow?) {
+        let screens = NSScreen.screens
+        let presenterScreen = window?.screen ?? NSScreen.main ?? screens.first
+        let slideScreen = screens.count > 1 ? (screens.first { $0 != presenterScreen } ?? presenterScreen) : presenterScreen
+        guard let slideScreen else { return }
+
+        let slideWindow = SlideWindow(contentRect: slideScreen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        slideWindow.isReleasedWhenClosed = false
+        slideWindow.backgroundColor = .black
+        slideWindow.level = .normal
+        slideWindow.collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+        slideWindow.contentView = slides.webView
+        slideWindow.setFrame(slideScreen.frame, display: true)
+        slideWindow.onEscape = { [weak self] in self?.stop() }
+        self.slideWindow = slideWindow
+
+        previousOptions = NSApp.presentationOptions
+        if slideScreen == NSScreen.screens.first {
+            NSApp.presentationOptions = [.autoHideDock, .autoHideMenuBar]
+        }
+        slideWindow.makeKeyAndOrderFront(nil)
+        slideWindow.makeFirstResponder(slides.webView)
+
+        if screens.count > 1, let presenterScreen, presenterScreen != slideScreen {
+            showPresenter(on: presenterScreen)
+        }
+
+        slides.onSlide = { [weak self] body in
+            guard let self else { return }
+            state.index = body["index"] as? Int ?? 0
+            state.count = body["count"] as? Int ?? 0
+            state.notes = body["notes"] as? String ?? ""
+            state.title = body["title"] as? String ?? ""
+            state.nextTitle = body["nextTitle"] as? String ?? ""
+        }
+        slides.onExit = { [weak self] in self?.stop() }
+
+        var options = configuration.javaScriptValue
+        options["separator"] = separator.rawValue
+        Task {
+            let count = await slides.load(markdown, options: options)
+            state.startedAt = Date()
+            if count == 0 {
+                let alert = NSAlert()
+                alert.messageText = "Nothing to present"
+                alert.informativeText = "Add some content to the document first."
+                alert.runModal()
+                stop()
+            }
+        }
+    }
+
+    private func showPresenter(on screen: NSScreen) {
+        let view = PresenterView(state: state,
+                                 previous: { [weak self] in self?.slides.run("MDSlides.previous()") },
+                                 next: { [weak self] in self?.slides.run("MDSlides.next()") },
+                                 end: { [weak self] in self?.stop() })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "Presenter"
+        window.contentView = NSHostingView(rootView: view)
+        let frame = screen.visibleFrame
+        window.setFrameOrigin(NSPoint(x: frame.midX - 380, y: frame.midY - 260))
+        window.orderFront(nil)
+        presenterWindow = window
+    }
+
+    func stop() {
+        NSApp.presentationOptions = previousOptions
+        slideWindow?.orderOut(nil)
+        slideWindow?.contentView = nil
+        presenterWindow?.orderOut(nil)
+        slideWindow = nil
+        presenterWindow = nil
+        if Self.current === self { Self.current = nil }
+    }
+
+    // MARK: - Export
+
+    /// Renders the slides offscreen and saves them as a 16:9 landscape PDF.
+    static func exportPDF(markdown: String, title: String, documentURL: URL?, configuration: PreviewConfiguration,
+                          separator: SlideSeparator, window: NSWindow?) async {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = "\(title) Slides.pdf"
+        if let directory = documentURL?.deletingLastPathComponent() { panel.directoryURL = directory }
+        let response = window != nil ? await panel.beginSheetModal(for: window!) : panel.runModal()
+        guard response == .OK, let url = panel.url else { return }
+        await renderPDF(markdown: markdown, to: url, documentURL: documentURL, configuration: configuration,
+                        separator: separator, hostWindow: window)
+    }
+
+    /// Also used by tests. Returns the number of slides.
+    @discardableResult
+    static func renderPDF(markdown: String, to url: URL, documentURL: URL?, configuration: PreviewConfiguration,
+                          separator: SlideSeparator, hostWindow: NSWindow?) async -> Int {
+        let slides = SlidesWebView(documentDirectory: documentURL?.deletingLastPathComponent())
+        let window = NSWindow(contentRect: NSRect(x: -30000, y: -30000, width: 1280, height: 720),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.alphaValue = 0
+        window.contentView = slides.webView
+        window.orderFrontRegardless()
+        defer { window.contentView = nil; window.close() }
+
+        var options = configuration.javaScriptValue
+        options["separator"] = separator.rawValue
+        let count = await slides.load(markdown, options: options)
+
+        let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+        // Slides are 1280×720 CSS pixels; WebKit prints 96 px per inch and PDF uses 72 pt per inch.
+        info.paperSize = NSSize(width: 960, height: 540)
+        info.orientation = .landscape
+        info.topMargin = 0; info.bottomMargin = 0; info.leftMargin = 0; info.rightMargin = 0
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        info.jobDisposition = .save
+        info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = url
+        await OffscreenRenderer.runPrint(webView: slides.webView, info: info, showPanels: false,
+                                         title: url.deletingPathExtension().lastPathComponent, hostWindow: hostWindow ?? window)
+        return count
+    }
+}
+
+private struct PresenterView: View {
+    let state: PresentationState
+    let previous: () -> Void
+    let next: () -> Void
+    let end: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(state.count == 0 ? "Loading…" : "Slide \(state.index + 1) of \(state.count)")
+                    .font(.title2.bold())
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let seconds = Int(context.date.timeIntervalSince(state.startedAt))
+                    Text(String(format: "%02d:%02d", seconds / 60, seconds % 60))
+                        .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                }
+            }
+            if !state.title.isEmpty {
+                Text(state.title).font(.title3)
+            }
+            GroupBox("Notes") {
+                ScrollView {
+                    Text(state.notes.isEmpty ? "No notes. Add <!-- notes: … --> to the slide." : state.notes)
+                        .font(.title3)
+                        .foregroundStyle(state.notes.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+            }
+            HStack {
+                Text(state.nextTitle.isEmpty ? (state.index + 1 >= state.count ? "Last slide" : "Next slide")
+                     : "Next: \(state.nextTitle)")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: previous) { Label("Previous", systemImage: "chevron.left") }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
+                Button(action: next) { Label("Next", systemImage: "chevron.right") }
+                    .keyboardShortcut(.rightArrow, modifiers: [])
+                    .buttonStyle(.borderedProminent)
+                Button("End", role: .destructive, action: end)
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 560, minHeight: 380)
+    }
+}

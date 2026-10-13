@@ -101,6 +101,11 @@ enum SettingsKey {
     static let syncScroll = "syncScroll"
     static let showStatusBar = "showStatusBar"
     static let showFormattingBar = "showFormattingBar"
+    static let autocomplete = "autocomplete"
+    static let pasteAsMarkdown = "pasteAsMarkdown"
+    static let checkDocument = "checkDocument"
+    static let showProblems = "showProblems"
+    static let slideSeparator = "slideSeparator"
 }
 
 /// Editor options passed from SwiftUI settings to the text view.
@@ -116,6 +121,8 @@ struct EditorConfiguration: Equatable {
     var smartLists = true
     var spellCheck = true
     var syntaxHighlighting = true
+    var autocomplete = true
+    var pasteAsMarkdown = true
 
     var font: NSFont {
         let size = CGFloat(fontSize * zoom)

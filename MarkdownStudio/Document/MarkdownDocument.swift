@@ -20,6 +20,8 @@ nonisolated final class MarkdownDocument: ReferenceFileDocument, @unchecked Send
     /// Kept in sync by the editor; deliberately not @Published so typing
     /// doesn't re-render the window.
     var text: String
+    /// The onboarding tour's sample document (not saved anywhere).
+    var isTour = false
 
     init(text: String = "") {
         self.text = text

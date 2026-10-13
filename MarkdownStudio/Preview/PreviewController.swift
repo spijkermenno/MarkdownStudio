@@ -105,6 +105,12 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         webView.evaluateJavaScript("MDPreview.revealLine(\(line))", completionHandler: nil)
     }
 
+    /// Converts clipboard HTML to Markdown (Turndown, see Web/paste.js).
+    func markdown(fromHTML html: String) async -> String? {
+        await waitUntilReady()
+        return await call("return MDPaste.convert(html)", ["html": html])
+    }
+
     /// The rendered body HTML with preview-only markup removed.
     func exportedBodyHTML() async -> String {
         await call("return MDPreview.exportHTML()") ?? ""

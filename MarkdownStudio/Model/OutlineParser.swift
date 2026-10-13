@@ -5,6 +5,8 @@ nonisolated struct OutlineItem: Identifiable, Hashable, Sendable {
     var title: String
     /// Zero-based source line.
     var line: Int
+    /// The heading's HTML id in the preview (same algorithm as render.js).
+    var anchor: String = ""
     var id: Int { line }
 }
 
@@ -19,6 +21,7 @@ nonisolated enum OutlineParser {
     static func parse(_ text: String) -> [OutlineItem] {
         let lines = text.components(separatedBy: "\n").map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
         var items: [OutlineItem] = []
+        var customIDs: [String?] = []
         var fenceMarker: String?
         var start = 0
 
@@ -53,10 +56,12 @@ nonisolated enum OutlineParser {
                 let level = m.range(at: 1).length
                 let title = m.range(at: 2).location != NSNotFound ? (line as NSString).substring(with: m.range(at: 2)) : ""
                 items.append(OutlineItem(level: level, title: clean(title), line: i))
+                customIDs.append(customID(title))
                 previousIsParagraph = false
             } else if previousIsParagraph, let m = setext.firstMatch(in: line, range: range) {
                 let level = (line as NSString).substring(with: m.range(at: 1)).hasPrefix("=") ? 1 : 2
                 items.append(OutlineItem(level: level, title: clean(lines[i - 1]), line: i - 1))
+                customIDs.append(customID(lines[i - 1]))
                 previousIsParagraph = false
             } else {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -65,7 +70,16 @@ nonisolated enum OutlineParser {
             }
             i += 1
         }
+        let anchors = HeadingSlug.uniqueIDs(items.enumerated().map { index, item in
+            (item.title == "Untitled" ? "" : item.title, customIDs[index])
+        })
+        for index in items.indices { items[index].anchor = anchors[index] }
         return items
+    }
+
+    private static func customID(_ title: String) -> String? {
+        guard let match = title.range(of: "\\{#([\\w\\-:.]+)\\}\\s*$", options: .regularExpression) else { return nil }
+        return String(title[match]).trimmingCharacters(in: CharacterSet(charactersIn: "{}# \t"))
     }
 
     /// Strips inline Markdown so the outline shows plain titles.

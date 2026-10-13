@@ -238,7 +238,7 @@ final class MarkdownHighlighter {
 
     // MARK: - Block scanning
 
-    static func fencedCodeRanges(in string: String) -> [NSRange] {
+    nonisolated static func fencedCodeRanges(in string: String) -> [NSRange] {
         var ranges: [NSRange] = []
         var open: (marker: Character, count: Int, start: Int)?
         var location = 0
@@ -267,7 +267,7 @@ final class MarkdownHighlighter {
         return ranges
     }
 
-    static func frontMatterRange(in string: String) -> NSRange? {
+    nonisolated static func frontMatterRange(in string: String) -> NSRange? {
         guard string.hasPrefix("---\n") || string.hasPrefix("---\r\n") else { return nil }
         let ns = string as NSString
         let search = NSRange(location: 3, length: ns.length - 3)

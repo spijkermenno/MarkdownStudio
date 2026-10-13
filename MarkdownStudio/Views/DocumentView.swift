@@ -31,6 +31,11 @@ struct DocumentView: View {
     @AppStorage(SettingsKey.syncScroll) private var syncScroll = true
     @AppStorage(SettingsKey.showStatusBar) private var showStatusBar = true
     @AppStorage(SettingsKey.showFormattingBar) private var showFormattingBar = false
+    @AppStorage(SettingsKey.autocomplete) private var autocomplete = true
+    @AppStorage(SettingsKey.pasteAsMarkdown) private var pasteAsMarkdown = true
+    @AppStorage(SettingsKey.checkDocument) private var checkDocument = true
+    @AppStorage(SettingsKey.showProblems) private var showProblems = false
+    @AppStorage(SettingsKey.slideSeparator) private var slideSeparator = SlideSeparator.automatic
 
     init(document: MarkdownDocument, fileURL: URL?) {
         self.document = document
@@ -47,7 +52,8 @@ struct DocumentView: View {
                             showLineNumbers: showLineNumbers, highlightCurrentLine: highlightCurrentLine,
                             typewriterScrolling: typewriterScrolling, focusMode: focusMode,
                             autoPairing: autoPairing, smartLists: smartLists, spellCheck: spellCheck,
-                            syntaxHighlighting: syntaxHighlighting)
+                            syntaxHighlighting: syntaxHighlighting, autocomplete: autocomplete,
+                            pasteAsMarkdown: pasteAsMarkdown)
     }
 
     private var previewConfiguration: PreviewConfiguration {
@@ -57,8 +63,9 @@ struct DocumentView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            OutlineView(session: session)
-                .navigationSplitViewColumnWidth(min: 170, ideal: 220, max: 380)
+            SidebarView(session: session)
+                .tourHighlight(session.tourTarget == .sidebar)
+                .navigationSplitViewColumnWidth(min: 190, ideal: 240, max: 400)
         } detail: {
             VStack(spacing: 0) {
                 if showFormattingBar && session.viewMode.showsEditor && !session.distractionFree {
@@ -66,9 +73,26 @@ struct DocumentView: View {
                     Divider()
                 }
                 content
+                    .overlay(alignment: .bottom) {
+                        if let toast = session.toast {
+                            ToastView(toast: toast) { session.toast = nil }
+                                .padding(.bottom, 14)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.2), value: session.toast?.id)
+                    .overlay(alignment: tourCardAlignment) {
+                        TourCard(session: session).padding(20)
+                    }
+                    .animation(.easeOut(duration: 0.25), value: session.tourStep)
+                if showProblems && checkDocument && !session.distractionFree {
+                    Divider()
+                    ProblemsPanel(session: session)
+                }
                 if showStatusBar && !session.distractionFree {
                     Divider()
                     StatusBarView(session: session)
+                        .tourHighlight(session.tourTarget == .statusBar, inset: 0)
                 }
             }
         }
@@ -88,6 +112,9 @@ struct DocumentView: View {
         .onChange(of: editorConfiguration) { _, configuration in session.editor.configure(configuration) }
         .onChange(of: previewConfiguration) { _, configuration in session.applyPreviewConfiguration(configuration) }
         .onChange(of: syncScroll) { _, value in session.syncScroll = value }
+        .onChange(of: checkDocument) { _, value in session.checkDocument = value }
+        .onChange(of: session.sidebarRequest) { _, _ in columnVisibility = .all }
+        .onChange(of: session.isInWorkspace) { _, inside in showFolderTree(inside) }
         .onChange(of: session.viewMode) { _, mode in storedViewMode = mode.rawValue }
         .onChange(of: session.splitOrientation) { _, orientation in storedOrientation = orientation.rawValue }
         .onChange(of: columnVisibility) { _, visibility in showOutline = visibility != .detailOnly }
@@ -100,21 +127,39 @@ struct DocumentView: View {
     private var content: some View {
         switch session.viewMode {
         case .editor:
-            EditorHost(controller: session.editor)
+            editorPane
         case .preview:
-            PreviewHost(controller: session.preview)
+            previewPane
         case .split:
             if session.splitOrientation == .horizontal {
                 HSplitView {
-                    EditorHost(controller: session.editor).frame(minWidth: 220, maxWidth: .infinity)
-                    PreviewHost(controller: session.preview).frame(minWidth: 220, maxWidth: .infinity)
+                    editorPane.frame(minWidth: 220, maxWidth: .infinity)
+                    previewPane.frame(minWidth: 220, maxWidth: .infinity)
                 }
             } else {
                 VSplitView {
-                    EditorHost(controller: session.editor).frame(minHeight: 120, maxHeight: .infinity)
-                    PreviewHost(controller: session.preview).frame(minHeight: 120, maxHeight: .infinity)
+                    editorPane.frame(minHeight: 120, maxHeight: .infinity)
+                    previewPane.frame(minHeight: 120, maxHeight: .infinity)
                 }
             }
+        }
+    }
+
+    private var editorPane: some View {
+        EditorHost(controller: session.editor).tourHighlight(session.tourTarget == .editor)
+    }
+
+    private var previewPane: some View {
+        PreviewHost(controller: session.preview).tourHighlight(session.tourTarget == .preview)
+    }
+
+    /// Keeps the tour card away from the part it's describing.
+    private var tourCardAlignment: Alignment {
+        switch session.tourTarget {
+        case .editor: .bottomTrailing
+        case .preview, .sidebar: .bottomLeading
+        case .statusBar, .shareButtons, .viewModes: .bottomTrailing
+        case .none: .center
         }
     }
 
@@ -128,6 +173,7 @@ struct DocumentView: View {
             }
             .pickerStyle(.segmented)
             .help("Editor ⌘1 · Split ⌘2 · Preview ⌘3")
+            .tourHighlight(session.tourTarget == .viewModes, inset: -4)
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -140,9 +186,19 @@ struct DocumentView: View {
             .help(session.splitOrientation == .horizontal ? "Split Top and Bottom" : "Split Side by Side")
         }
         ToolbarItem(placement: .primaryAction) {
+            Button {
+                session.startPresentation(separator: slideSeparator)
+            } label: {
+                Label("Present", systemImage: "play.rectangle")
+            }
+            .help("Start Presentation (⌥⌘P)")
+            .tourHighlight(session.tourTarget == .shareButtons, inset: -4)
+        }
+        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button("Export as HTML…", action: session.exportHTML)
                 Button("Export as PDF…", action: session.exportPDF)
+                Button("Export Slides as PDF…") { session.exportSlidesPDF(separator: slideSeparator) }
                 Divider()
                 Button("Copy as HTML", action: session.copyHTML)
                 Button("Copy as Rich Text", action: session.copyRichText)
@@ -151,7 +207,18 @@ struct DocumentView: View {
             } label: {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
+            .tourHighlight(session.tourTarget == .shareButtons, inset: -4)
             .help("Export, copy or print the rendered document")
+        }
+    }
+
+    /// Documents from the open folder show its tree; others fall back to the outline.
+    private func showFolderTree(_ inside: Bool) {
+        if inside {
+            session.sidebarTab = .files
+            columnVisibility = .all
+        } else if session.sidebarTab != .outline {
+            session.sidebarTab = .outline
         }
     }
 
@@ -164,9 +231,16 @@ struct DocumentView: View {
         columnVisibility = showOutline ? .all : .detailOnly
         session.onTextChange = { [document] in document.text = $0 }
         session.syncScroll = syncScroll
+        session.checkDocument = checkDocument
         session.applyPreviewConfiguration(previewConfiguration)
         session.editor.configure(editorConfiguration)
         session.start()
+        showFolderTree(session.isInWorkspace)
+        if document.isTour {
+            session.startTour()
+        } else if Onboarding.shouldPresentAutomatically() {
+            openWindow(id: Onboarding.windowID)
+        }
     }
 }
 

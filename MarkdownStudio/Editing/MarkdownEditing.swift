@@ -150,10 +150,12 @@ nonisolated enum MarkdownEditing {
 
     static func toggleBlockquote(_ text: String, selection: NSRange) -> TextEdit {
         let lines = selectedLines(text, selection: selection)
-        let allQuoted = lines.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty || matches(quotePrefix, $0) }
+        let nonEmpty = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        // On empty lines there's nothing to unquote, so a quote marker is added.
+        let allQuoted = !nonEmpty.isEmpty && lines.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty || matches(quotePrefix, $0) }
         return transformLines(text, selection: selection) { line, _ in
             if allQuoted { return replacingFirstMatch(quotePrefix, in: line, with: "") }
-            return line.isEmpty ? ">" : "> " + line
+            return "> " + line
         }
     }
 
@@ -163,9 +165,11 @@ nonisolated enum MarkdownEditing {
         let lines = selectedLines(text, selection: selection)
         let nonEmpty = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         let alreadyKind = !nonEmpty.isEmpty && nonEmpty.allSatisfy { listKind(of: $0) == kind }
+        // When every selected line is empty (e.g. the caret on a blank line), start a new item there.
+        let onlyBlankLines = nonEmpty.isEmpty
         var number = 0
         return transformLines(text, selection: selection) { line, _ in
-            if line.trimmingCharacters(in: .whitespaces).isEmpty { return line }
+            if line.trimmingCharacters(in: .whitespaces).isEmpty && !onlyBlankLines { return line }
             let match = listPrefix.firstMatch(in: line, range: NSRange(location: 0, length: line.utf16Length))
             let indent = match.map { (line as NSString).substring(with: $0.range(at: 1)) } ?? String(line.prefix { $0 == " " || $0 == "\t" })
             let body = match.map { (line as NSString).substring(from: NSMaxRange($0.range)) } ?? String(line.dropFirst(indent.count))
@@ -228,7 +232,7 @@ nonisolated enum MarkdownEditing {
     }
 
     /// Inserts a block on its own lines, separated from surrounding text by blank lines.
-    private static func insertBlock(_ block: String, in text: String, selection: NSRange, caretOffset: Int?) -> TextEdit {
+    static func insertBlock(_ block: String, in text: String, selection: NSRange, caretOffset: Int?) -> TextEdit {
         let ns = text as NSString
         let before = ns.substring(to: selection.location)
         let after = ns.substring(from: NSMaxRange(selection))

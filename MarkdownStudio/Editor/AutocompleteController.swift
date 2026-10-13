@@ -1,0 +1,146 @@
+import AppKit
+import Observation
+import SwiftUI
+
+@Observable
+final class CompletionModel {
+    var items: [CompletionItem] = []
+    var selection = 0
+    @ObservationIgnored var onPick: ((Int) -> Void)?
+}
+
+/// Shows completion suggestions in a small panel under the caret.
+final class AutocompleteController {
+    private weak var textView: MarkdownTextView?
+    private let model = CompletionModel()
+    private var context: CompletionContext?
+    private lazy var panel: NSPanel = makePanel()
+    var documentDirectory: URL?
+    var isEnabled = true
+
+    var isVisible: Bool { panel.isVisible }
+
+    init(textView: MarkdownTextView) {
+        self.textView = textView
+        model.onPick = { [weak self] index in
+            self?.model.selection = index
+            self?.accept()
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hide() }
+        }
+    }
+
+    private func makePanel() -> NSPanel {
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 200),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.hidesOnDeactivate = true
+        panel.contentView = NSHostingView(rootView: CompletionListView(model: model))
+        return panel
+    }
+
+    /// Re-evaluates after typing. Shows, updates or hides the list.
+    func update() {
+        guard isEnabled, let textView, !textView.hasMarkedText(), textView.selectedRange().length == 0,
+              let context = CompletionEngine.context(in: textView.string, caret: textView.selectedRange().location)
+        else { return hide() }
+        let items = CompletionEngine.items(for: context, text: textView.string, documentDirectory: documentDirectory)
+        guard !items.isEmpty else { return hide() }
+        self.context = context
+        model.items = items
+        model.selection = 0
+        show(at: context.replaceRange.location)
+    }
+
+    private func show(at location: Int) {
+        guard let textView, let window = textView.window else { return }
+        let caretRect = textView.firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil)
+        let height = CGFloat(model.items.count) * 26 + 10
+        panel.setContentSize(NSSize(width: 280, height: height))
+        var origin = NSPoint(x: caretRect.minX - 8, y: caretRect.minY - height - 4)
+        if let screen = window.screen, origin.y < screen.visibleFrame.minY {
+            origin.y = caretRect.maxY + 4   // no room below: show above the line
+        }
+        panel.setFrameOrigin(origin)
+        if panel.parent == nil { window.addChildWindow(panel, ordered: .above) }
+        panel.orderFront(nil)
+    }
+
+    func hide() {
+        guard panel.isVisible else { return }
+        panel.parent?.removeChildWindow(panel)
+        panel.orderOut(nil)
+        context = nil
+    }
+
+    /// Handles navigation keys while the list is open.
+    func handle(_ selector: Selector) -> Bool {
+        guard isVisible else { return false }
+        switch selector {
+        case #selector(NSResponder.moveDown(_:)):
+            model.selection = (model.selection + 1) % model.items.count
+        case #selector(NSResponder.moveUp(_:)):
+            model.selection = (model.selection - 1 + model.items.count) % model.items.count
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+            accept()
+        case #selector(NSResponder.cancelOperation(_:)):
+            hide()
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func accept() {
+        guard let textView, let context, model.items.indices.contains(model.selection) else { return hide() }
+        let item = model.items[model.selection]
+        let ns = textView.string as NSString
+        var replacement = item.insertion
+        let end = NSMaxRange(context.replaceRange)
+        if let closer = context.closer, !(end < ns.length && ns.substring(with: NSRange(location: end, length: 1)) == closer) {
+            replacement += closer
+        }
+        let caret = context.replaceRange.location + item.insertion.utf16Length + (context.closer != nil ? 1 : 0)
+        hide()
+        textView.apply(TextEdit(range: context.replaceRange, replacement: replacement,
+                                selection: NSRange(location: caret, length: 0)))
+        if item.keepsOpen { update() }
+    }
+}
+
+private struct CompletionListView: View {
+    let model: CompletionModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(model.items.enumerated()), id: \.offset) { index, item in
+                HStack(spacing: 8) {
+                    switch item.icon {
+                    case .emoji(let character): Text(character).frame(width: 18)
+                    case .symbol(let name): Image(systemName: name).frame(width: 18).foregroundStyle(.secondary)
+                    }
+                    Text(item.title).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    if let detail = item.detail {
+                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    }
+                }
+                .font(.system(size: 12))
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .foregroundStyle(index == model.selection ? Color.white : Color.primary)
+                .background(index == model.selection ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
+                .onTapGesture { model.onPick?(index) }
+            }
+        }
+        .padding(5)
+        .frame(width: 280)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+    }
+}

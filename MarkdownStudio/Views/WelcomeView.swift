@@ -18,10 +18,15 @@ struct WelcomeView: View {
             recentFiles
                 .frame(width: 300)
         }
-        .frame(height: 400)
+        .frame(height: 500)
         .onAppear {
             WelcomeWindow.openWindow = openWindow
             refresh()
+            // First launch: the setup and tour replace the Welcome window.
+            if Onboarding.shouldPresentAutomatically() {
+                openWindow(id: Onboarding.windowID)
+                dismissWindow(id: WelcomeWindow.id)
+            }
         }
     }
 
@@ -44,9 +49,41 @@ struct WelcomeView: View {
                 actionButton("New Document", systemImage: "doc.badge.plus", shortcut: "⌘N") {
                     newDocument { MarkdownDocument() }
                 }
-                actionButton("Open Existing File…", systemImage: "folder", shortcut: "⌘O") {
+                actionButton("Open Existing File…", systemImage: "doc", shortcut: "⌘O") {
                     NSDocumentController.shared.openDocument(nil)
                 }
+                actionButton("Open Folder…", systemImage: "folder", shortcut: "⌥⌘O") {
+                    Workspace.shared.chooseFolder()
+                }
+                if let folder = Workspace.shared.rootURL {
+                    actionButton("Continue in “\(folder.lastPathComponent)”", systemImage: "folder.badge.gearshape", shortcut: "") {
+                        Workspace.shared.showFolderWindow()
+                    }
+                }
+                Menu {
+                    ForEach(TemplateLibrary.all) { template in
+                        Button(template.name) {
+                            let text = template.filled()
+                            newDocument { MarkdownDocument(text: text) }
+                        }
+                    }
+                    Divider()
+                    Button("Open Templates Folder…") { TemplateLibrary.revealUserTemplatesFolder() }
+                } label: {
+                    HStack {
+                        Image(systemName: "doc.on.doc").frame(width: 22)
+                        Text("New from Template")
+                        Spacer()
+                        Image(systemName: "chevron.down").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(.top, 28)
             .padding(.horizontal, 36)
@@ -76,8 +113,8 @@ struct WelcomeView: View {
             HStack {
                 Image(systemName: systemImage)
                     .frame(width: 22)
-                Text(title)
-                Spacer()
+                Text(title).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
                 Text(shortcut).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
@@ -123,7 +160,10 @@ struct WelcomeView: View {
 
     private func refresh() {
         recents = Array(NSDocumentController.shared.recentDocumentURLs
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .filter { url in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
+            }
             .prefix(5))
         isDefaultApp = DefaultAppHandler.isDefault
     }

@@ -7,6 +7,7 @@ enum FormatCommand: Hashable {
     case blockquote, bulletList, numberedList, taskList
     case codeBlock, horizontalRule, table, formatTable
     case indent, outdent
+    case moveLinesUp, moveLinesDown, duplicateLines, renumberList, tableOfContents
 
     var actionName: String {
         switch self {
@@ -29,6 +30,11 @@ enum FormatCommand: Hashable {
         case .formatTable: "Format Table"
         case .indent: "Indent"
         case .outdent: "Outdent"
+        case .moveLinesUp: "Move Line Up"
+        case .moveLinesDown: "Move Line Down"
+        case .duplicateLines: "Duplicate Line"
+        case .renumberList: "Renumber List"
+        case .tableOfContents: "Table of Contents"
         }
     }
 }
@@ -41,9 +47,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
     let textView: MarkdownTextView
     private let ruler: LineNumberRulerView
     private let highlighter = MarkdownHighlighter()
+    private(set) lazy var autocomplete = AutocompleteController(textView: textView)
+    private var problemRanges: [NSRange] = []
     private(set) var lineIndex = LineIndex("")
     private(set) var configuration = EditorConfiguration()
 
+    /// Clipboard HTML → Markdown, provided by the session (uses the preview's web view).
+    var htmlConverter: ((String) async -> String?)? {
+        didSet { textView.htmlConverter = configuration.pasteAsMarkdown ? htmlConverter : nil }
+    }
     var onTextChange: ((String) -> Void)?
     var onSelectionChange: ((_ line: Int, _ column: Int, _ selectedLength: Int) -> Void)?
     /// Top visible source line (fractional) and whether the editor is scrolled to the end.
@@ -51,11 +63,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
 
     private var isApplyingExternalScroll = false
     private var isSettingText = false
+    private var isUpdatingTableOfContents = false
     private var pendingEditedRange: NSRange?
 
     var documentURL: URL? {
         get { textView.documentURL }
-        set { textView.documentURL = newValue }
+        set {
+            textView.documentURL = newValue
+            autocomplete.documentDirectory = newValue?.deletingLastPathComponent()
+        }
     }
 
     init(text: String) {
@@ -130,6 +146,9 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         textView.smartLists = configuration.smartLists
         textView.highlightCurrentLine = configuration.highlightCurrentLine
         textView.isContinuousSpellCheckingEnabled = configuration.spellCheck
+        textView.htmlConverter = configuration.pasteAsMarkdown ? htmlConverter : nil
+        autocomplete.isEnabled = configuration.autocomplete
+        if !configuration.autocomplete { autocomplete.hide() }
         scrollView.rulersVisible = configuration.showLineNumbers
         highlighter.configure(configuration)
         textView.typingAttributes = highlighter.baseAttributes
@@ -193,12 +212,23 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         case .formatTable: edit = TableFormatter.formatTable(text, at: selection.location)
         case .indent: edit = MarkdownEditing.indent(text, selection: selection)
         case .outdent: edit = MarkdownEditing.outdent(text, selection: selection)
+        case .moveLinesUp: edit = MarkdownEditing.moveLines(text, selection: selection, up: true)
+        case .moveLinesDown: edit = MarkdownEditing.moveLines(text, selection: selection, up: false)
+        case .duplicateLines: edit = MarkdownEditing.duplicateLines(text, selection: selection)
+        case .renumberList:
+            edit = MarkdownEditing.renumberList(text, line: lineIndex.line(containing: selection.location), selection: selection)
+        case .tableOfContents: edit = TableOfContents.insert(text, selection: selection)
         }
         guard let edit else {
             NSSound.beep()
             return
         }
         textView.apply(edit, actionName: command.actionName)
+        if command == .moveLinesUp || command == .moveLinesDown {
+            // Keep both the list the lines left and the one they joined numbered.
+            textView.renumberList(at: edit.range.location)
+            textView.renumberList(at: textView.selectedRange().location)
+        }
         textView.window?.makeFirstResponder(textView)
     }
 
@@ -228,7 +258,26 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
             highlighter.highlightEdit(storage, editedRange: clamped.location == NSNotFound ? NSRange(location: storage.length, length: 0) : clamped)
         }
         pendingEditedRange = nil
+        // Keep a table of contents in sync with the headings. The update joins
+        // the same undo step as the edit that caused it, and its nested
+        // textDidChange reports the final text.
+        if !isUpdatingTableOfContents, let edit = TableOfContents.update(text) {
+            isUpdatingTableOfContents = true
+            textView.applyKeepingSelection(edit)
+            isUpdatingTableOfContents = false
+            return
+        }
         onTextChange?(text)
+        if textView.lastChangeWasTyping {
+            textView.lastChangeWasTyping = false
+            autocomplete.update()
+        } else {
+            autocomplete.hide()
+        }
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        autocomplete.handle(commandSelector)
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
@@ -236,6 +285,15 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         let line = lineIndex.line(containing: selection.location)
         let column = selection.location - lineIndex.start(ofLine: line)
         onSelectionChange?(line, column, selection.length)
+        if autocomplete.isVisible, !textView.lastChangeWasTyping {
+            // Clicking or arrowing away closes the list; typing keeps it updated.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.textView.lastChangeWasTyping else { return }
+                if CompletionEngine.context(in: self.textView.string, caret: self.textView.selectedRange().location) == nil {
+                    self.autocomplete.hide()
+                }
+            }
+        }
         ruler.needsDisplay = true
         updateFocusMode()
         if configuration.typewriterScrolling { centerCaret() }
@@ -312,6 +370,43 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         scrollView.reflectScrolledClipView(clip)
         textView.window?.makeFirstResponder(textView)
         textView.showFindIndicator(for: content.length > 0 ? content : NSRange(location: content.location, length: 0))
+    }
+
+    // MARK: - Document check
+
+    /// Dotted underlines under problem ranges (warnings orange, notes blue).
+    func showProblems(_ problems: [DocumentProblem]) {
+        guard let layoutManager = textView.layoutManager else { return }
+        let length = (textView.string as NSString).length
+        for range in problemRanges where NSMaxRange(range) <= length {
+            layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
+            layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
+        }
+        problemRanges = []
+        let style = NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue
+        for problem in problems {
+            let range = NSIntersectionRange(problem.range, NSRange(location: 0, length: length))
+            guard range.length > 0 else { continue }
+            layoutManager.addTemporaryAttributes([
+                .underlineStyle: style,
+                .underlineColor: problem.severity == .warning ? NSColor.systemOrange : NSColor.systemBlue,
+            ], forCharacterRange: range)
+            problemRanges.append(range)
+        }
+    }
+
+    /// Selects a range and scrolls it into view.
+    func select(_ range: NSRange) {
+        let length = (textView.string as NSString).length
+        let clamped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+        reveal(line: lineIndex.line(containing: clamped.location), select: false)
+        textView.setSelectedRange(clamped)
+    }
+
+    /// Applies a quick fix from the document check.
+    func apply(_ edit: TextEdit, actionName: String) {
+        textView.apply(edit, actionName: actionName)
+        textView.window?.makeFirstResponder(textView)
     }
 
     // MARK: - Typewriter scrolling & focus mode

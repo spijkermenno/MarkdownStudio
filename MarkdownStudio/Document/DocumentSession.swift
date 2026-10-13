@@ -15,6 +15,32 @@ final class DocumentSession {
     var syncScroll = true
     var distractionFree = false
     var isShowingGoToLine = false
+    var toast: Toast?
+    var sidebarTab: SidebarTab = .outline
+    /// An untitled document created for the open folder (e.g. an empty folder).
+    var createdInWorkspace = false
+    /// The folder tree appears only for documents inside the open folder.
+    var isInWorkspace: Bool {
+        let workspace = Workspace.shared
+        return workspace.rootURL != nil && ((fileURL == nil && createdInWorkspace) || workspace.contains(fileURL))
+    }
+    /// Incremented to ask the window to show the sidebar / focus folder search.
+    var sidebarRequest = 0
+    var searchFocusRequest = 0
+    private(set) var problems: [DocumentProblem] = []
+    /// The current step of the onboarding tour, if this window is running it.
+    private(set) var tourStep: Int?
+    var tourTarget: TourTarget { tourStep.map { TourStep.all[$0].target } ?? .none }
+    @ObservationIgnored var checkDocument = true {
+        didSet { if !checkDocument { problems = []; editor.showProblems([]) } else { scheduleAnalysis(editor.text, delay: 0) } }
+    }
+
+    /// The word goal for this document (front matter `goal:` or a per-file setting).
+    private(set) var goal: Int?
+    private(set) var wordsToday = 0
+    @ObservationIgnored private var sessionGoal: Int?
+    @ObservationIgnored private let untitledKey = "untitled-" + UUID().uuidString
+    @ObservationIgnored private var hasAnalyzed = false
 
     private(set) var outline: [OutlineItem] = []
     private(set) var statistics = DocumentStatistics()
@@ -50,8 +76,13 @@ final class DocumentSession {
 
     /// Called once the window appears; computes the outline and statistics.
     func start() {
+        if fileURL == nil, WorkspaceNavigator.nextUntitledBelongsToWorkspace {
+            WorkspaceNavigator.nextUntitledBelongsToWorkspace = false
+            createdInWorkspace = true
+        }
         scheduleAnalysis(editor.text, delay: 0)
         watchFile()
+        WorkspaceNavigator.register(self, for: fileURL)
     }
 
     private func makeEditor() -> EditorController {
@@ -68,6 +99,14 @@ final class DocumentSession {
         editor.onScroll = { [weak self] line, atBottom in
             guard let self, syncScroll, viewMode == .split else { return }
             preview.scroll(toLine: line, atBottom: atBottom)
+        }
+        editor.htmlConverter = { [weak self] html in
+            await self?.preview.markdown(fromHTML: html)
+        }
+        editor.textView.onPasteConverted = { [weak self, weak editor] in
+            self?.showToast("Pasted as Markdown", systemImage: "doc.richtext", actionTitle: "Undo") {
+                editor?.textView.undoManager?.undo()
+            }
         }
         return editor
     }
@@ -99,10 +138,16 @@ final class DocumentSession {
     }
 
     private func updateFileURL() {
+        // A goal set before the first save now belongs to the file.
+        if let url = fileURL, let goal = sessionGoal {
+            WritingGoal.store(goal, for: url)
+            sessionGoal = nil
+        }
         editor.documentURL = fileURL
         preview.documentDirectory = fileURL?.deletingLastPathComponent()
         preview.render(editor.text)
         watchFile()
+        WorkspaceNavigator.register(self, for: fileURL)
     }
 
     // MARK: - Changes made by other apps
@@ -173,12 +218,129 @@ final class DocumentSession {
         analysisTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             guard !Task.isCancelled, let self else { return }
-            let (outline, statistics) = await Task.detached(priority: .utility) {
-                (OutlineParser.parse(text), DocumentStatistics(text))
+            let directory = self.fileURL?.deletingLastPathComponent()
+            let check = self.checkDocument
+            let (outline, statistics, problems) = await Task.detached(priority: .utility) {
+                (OutlineParser.parse(text), DocumentStatistics(text),
+                 check ? DocumentChecker.check(text, documentDirectory: directory) : [])
             }.value
             guard !Task.isCancelled else { return }
+            let previousWords = self.statistics.words
             if self.outline != outline { self.outline = outline }
             if self.statistics != statistics { self.statistics = statistics }
+            self.updateGoal(text: text, previousWords: previousWords)
+            if self.problems != problems { self.problems = problems }
+            // Only underline when the text hasn't moved on since the check started.
+            if self.editor.text == text { self.editor.showProblems(problems) }
+        }
+    }
+
+    // MARK: - Document check
+
+    func select(_ problem: DocumentProblem) {
+        if viewMode == .preview { viewMode = .split }
+        editor.select(problem.range)
+    }
+
+    func fix(_ problem: DocumentProblem) {
+        guard let fix = problem.fix else { return }
+        if viewMode == .preview { viewMode = .split }
+        editor.apply(fix.edit, actionName: fix.title)
+    }
+
+    // MARK: - Sidebar
+
+    func showSidebar(_ tab: SidebarTab) {
+        sidebarTab = tab
+        sidebarRequest += 1
+        if tab == .search { searchFocusRequest += 1 }
+    }
+
+    // MARK: - Tour
+
+    func startTour() {
+        TourStep.activeSession = self
+        tourStep = 0
+        TourStep.all[0].prepare(self)
+    }
+
+    func moveTour(by offset: Int) {
+        guard let step = tourStep else { return }
+        let next = max(0, min(step + offset, TourStep.all.count - 1))
+        TourStep.all[next].prepare(self)
+        tourStep = next
+    }
+
+    /// Finishing the last step completes onboarding; closing the tour early doesn't.
+    func endTour(completed: Bool) {
+        tourStep = nil
+        if TourStep.activeSession === self { TourStep.activeSession = nil }
+        if completed {
+            Onboarding.markCompleted()
+            showToast("Tour finished. Restart it any time in Settings → General.", systemImage: "checkmark.seal")
+        }
+    }
+
+    // MARK: - Presentation
+
+    func startPresentation(separator: SlideSeparator) {
+        PresentationController.start(markdown: editor.text, documentURL: fileURL, configuration: previewConfiguration,
+                                     separator: separator, from: window)
+    }
+
+    func exportSlidesPDF(separator: SlideSeparator) {
+        Task {
+            await PresentationController.exportPDF(markdown: editor.text, title: title, documentURL: fileURL,
+                                                   configuration: previewConfiguration, separator: separator, window: window)
+        }
+    }
+
+    // MARK: - Writing goal
+
+    private func updateGoal(text: String, previousWords: Int) {
+        let words = statistics.words
+        let newGoal = WritingGoal.frontMatterGoal(in: text) ?? fileURL.flatMap(WritingGoal.storedGoal) ?? sessionGoal
+        if hasAnalyzed, let newGoal, newGoal == goal, previousWords < newGoal, words >= newGoal {
+            showToast("Goal reached: \(newGoal.formatted()) words", systemImage: "checkmark.circle.fill")
+        }
+        hasAnalyzed = true
+        if goal != newGoal { goal = newGoal }
+        let today = WritingGoal.wordsToday(current: words, for: fileURL?.standardizedFileURL.path ?? untitledKey)
+        if wordsToday != today { wordsToday = today }
+    }
+
+    /// Whether the goal lives in the document's front matter.
+    var goalIsInFrontMatter: Bool { WritingGoal.frontMatterGoal(in: editor.text) != nil }
+
+    func setGoal(_ newGoal: Int?) {
+        let text = editor.text
+        if WritingGoal.frontMatterGoal(in: text) != nil, let edit = WritingGoal.frontMatterEdit(in: text, goal: newGoal) {
+            editor.textView.applyKeepingSelection(edit)
+            editor.textView.undoManager?.setActionName("Writing Goal")
+        } else if let url = fileURL {
+            WritingGoal.store(newGoal, for: url)
+        } else {
+            sessionGoal = newGoal
+        }
+        updateGoal(text: editor.text, previousWords: statistics.words)
+    }
+
+    // MARK: - Toasts
+
+    struct Toast: Identifiable {
+        let id = UUID()
+        var message: String
+        var systemImage: String
+        var actionTitle: String?
+        var action: (() -> Void)?
+    }
+
+    func showToast(_ message: String, systemImage: String = "info.circle", actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        let toast = Toast(message: message, systemImage: systemImage, actionTitle: actionTitle, action: action)
+        self.toast = toast
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            if self?.toast?.id == toast.id { self?.toast = nil }
         }
     }
 

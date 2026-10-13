@@ -20,6 +20,8 @@ private struct GeneralSettings: View {
     @AppStorage(SettingsKey.syncScroll) private var syncScroll = true
     @AppStorage(SettingsKey.showStatusBar) private var showStatusBar = true
     @AppStorage(SettingsKey.showFormattingBar) private var showFormattingBar = false
+    @AppStorage(SettingsKey.checkDocument) private var checkDocument = true
+    @AppStorage(SettingsKey.slideSeparator) private var slideSeparator = SlideSeparator.automatic
 
     var body: some View {
         Form {
@@ -36,12 +38,34 @@ private struct GeneralSettings: View {
             Toggle("Sync scrolling between editor and preview", isOn: $syncScroll)
             Toggle("Show status bar", isOn: $showStatusBar)
             Toggle("Show formatting bar", isOn: $showFormattingBar)
+            Toggle("Check the document for broken links and other problems", isOn: $checkDocument)
+            Picker("Slides start at", selection: $slideSeparator) {
+                ForEach(SlideSeparator.allCases) { Text($0.title).tag($0) }
+            }
             Section("Markdown Files") {
                 DefaultAppRow()
+            }
+            Section("Onboarding") {
+                OnboardingRow()
             }
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Restarts the first-run setup and tour.
+private struct OnboardingRow: View {
+    @Environment(\.openWindow) private var openWindow
+    @AppStorage(Onboarding.completedKey) private var completed = false
+
+    var body: some View {
+        LabeledContent {
+            Button("Restart Onboarding & Tour…") { openWindow(id: Onboarding.windowID) }
+        } label: {
+            Text("Setup and tour")
+            Text(completed ? "Completed" : "Not finished yet. It opens again at the next launch.")
+        }
     }
 }
 
@@ -91,6 +115,8 @@ private struct EditorSettings: View {
     @AppStorage(SettingsKey.autoPairing) private var autoPairing = true
     @AppStorage(SettingsKey.smartLists) private var smartLists = true
     @AppStorage(SettingsKey.spellCheck) private var spellCheck = true
+    @AppStorage(SettingsKey.autocomplete) private var autocomplete = true
+    @AppStorage(SettingsKey.pasteAsMarkdown) private var pasteAsMarkdown = true
 
     private static let monospacedFamilies: [String] = {
         let manager = NSFontManager.shared
@@ -130,6 +156,8 @@ private struct EditorSettings: View {
                 Toggle("Continue lists and quotes on Return", isOn: $smartLists)
                 Toggle("Auto-pair brackets and backticks", isOn: $autoPairing)
                 Toggle("Check spelling while typing", isOn: $spellCheck)
+                Toggle("Suggest emoji, files, headings and footnotes", isOn: $autocomplete)
+                Toggle("Convert rich text to Markdown when pasting", isOn: $pasteAsMarkdown)
             }
         }
         .formStyle(.grouped)

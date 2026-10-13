@@ -28,6 +28,35 @@ struct MarkdownStudioApp: App {
         .defaultLaunchBehavior(.presented)
         .commandsRemoved()
 
+        Window("Set Up Markdown Studio", id: Onboarding.windowID) {
+            OnboardingView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(.suppressed)
+        .defaultWindowPlacement { content, context in
+            let size = content.sizeThatFits(.unspecified)
+            let frame = context.defaultDisplay.visibleRect
+            return WindowPlacement(CGPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2), size: size)
+        }
+        .commandsRemoved()
+
+        Window("Quick Open", id: QuickOpen.id) {
+            QuickOpenView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(.suppressed)
+        .windowLevel(.floating)
+        .defaultWindowPlacement { content, context in
+            let size = content.sizeThatFits(.unspecified)
+            let frame = context.defaultDisplay.visibleRect
+            return WindowPlacement(CGPoint(x: frame.midX - size.width / 2, y: frame.minY + frame.height * 0.22), size: size)
+        }
+        .commandsRemoved()
+
         Settings {
             SettingsView()
         }

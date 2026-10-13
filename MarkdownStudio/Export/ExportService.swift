@@ -191,18 +191,23 @@ final class OffscreenRenderer {
     }
 
     func print(info: NSPrintInfo, showPanels: Bool, title: String, hostWindow: NSWindow?) async {
-        let operation = preview.webView.printOperation(with: info)
+        await Self.runPrint(webView: preview.webView, info: info, showPanels: showPanels, title: title, hostWindow: hostWindow ?? window)
+    }
+
+    /// Prints a web view (to paper or, with `.save`, to a PDF) and waits until done.
+    static func runPrint(webView: WKWebView, info: NSPrintInfo, showPanels: Bool, title: String, hostWindow: NSWindow) async {
+        let operation = webView.printOperation(with: info)
         operation.showsPrintPanel = showPanels
         operation.showsProgressPanel = showPanels
         operation.jobTitle = title
-        operation.view?.frame = preview.webView.bounds
+        operation.view?.frame = webView.bounds
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let delegate = PrintDelegate { delegate in
                 Self.printDelegates.remove(delegate)
                 continuation.resume()
             }
             Self.printDelegates.insert(delegate)
-            operation.runModal(for: hostWindow ?? window, delegate: delegate,
+            operation.runModal(for: hostWindow, delegate: delegate,
                                didRun: #selector(PrintDelegate.printOperationDidRun(_:success:contextInfo:)), contextInfo: nil)
         }
     }
