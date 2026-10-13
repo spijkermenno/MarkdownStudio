@@ -1,0 +1,33 @@
+import AppKit
+import UniformTypeIdentifiers
+
+/// Registers Markdown Studio as the default app for Markdown files.
+enum DefaultAppHandler {
+    /// The types Finder may assign to .md files (the declared one and whatever
+    /// Launch Services resolves the extensions to).
+    static var markdownTypes: [UTType] {
+        var types: [UTType] = [.markdownDocument]
+        for ext in ["md", "markdown"] {
+            if let type = UTType(filenameExtension: ext), !types.contains(type) { types.append(type) }
+        }
+        return types
+    }
+
+    static var isDefault: Bool {
+        let app = Bundle.main.bundleURL.standardizedFileURL
+        return markdownTypes.allSatisfy { type in
+            NSWorkspace.shared.urlForApplication(toOpen: type)?.standardizedFileURL == app
+        }
+    }
+
+    static var currentDefaultName: String? {
+        guard let url = NSWorkspace.shared.urlForApplication(toOpen: .markdownDocument) else { return nil }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    static func makeDefault() async throws {
+        for type in markdownTypes {
+            try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: type)
+        }
+    }
+}

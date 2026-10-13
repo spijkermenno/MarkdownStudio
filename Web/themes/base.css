@@ -1,0 +1,101 @@
+/* Shared preview styles. Themes only set typography and colours. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --subtle-bg: #f6f8fa;
+  --accent: #0969da;
+  --mark-bg: #fff8c5;
+  --flash: rgba(9, 105, 218, 0.14);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --fg: #e6edf3;
+    --muted: #9198a1;
+    --border: #3d444d;
+    --subtle-bg: #262a30;
+    --accent: #4493f8;
+    --mark-bg: #bb800926;
+    --flash: rgba(68, 147, 248, 0.2);
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+}
+.markdown-body {
+  max-width: var(--content-width, 860px);
+  margin: 0 auto;
+  padding: 28px 36px 120px;
+  word-wrap: break-word;
+}
+.markdown-body > :first-child { margin-top: 0 !important; }
+
+.markdown-body img, .markdown-body video { max-width: 100%; height: auto; }
+.markdown-body a { color: var(--accent); }
+.markdown-body mark { background: var(--mark-bg); color: inherit; padding: 0 2px; border-radius: 2px; }
+.markdown-body kbd {
+  display: inline-block; padding: 2px 5px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1; color: var(--fg); background: var(--subtle-bg); border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 5px; vertical-align: middle;
+}
+
+/* Code blocks + copy button */
+.markdown-body pre { position: relative; overflow: auto; }
+.markdown-body pre code.hljs { background: transparent; padding: 0; }
+.copy-button {
+  position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity .15s;
+  font: 11px -apple-system, BlinkMacSystemFont, sans-serif; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+}
+pre:hover .copy-button, .copy-button:focus { opacity: 1; }
+.copy-button.copied { color: #1a7f37; opacity: 1; }
+
+/* Task lists */
+.markdown-body .contains-task-list { list-style: none; padding-left: 1.2em; }
+.markdown-body .task-list-item { position: relative; }
+.markdown-body .task-list-item-checkbox { margin: 0 .35em 0 -1.25em; vertical-align: middle; cursor: pointer; }
+.markdown-body .contains-task-list .contains-task-list { padding-left: 1.6em; }
+
+/* Math & diagrams */
+.markdown-body .math-block { overflow-x: auto; overflow-y: hidden; margin: 1em 0; text-align: center; }
+.markdown-body .math-error { color: #cf222e; font-family: ui-monospace, monospace; }
+.markdown-body .mermaid-block { margin: 1em 0; text-align: center; overflow-x: auto; }
+.markdown-body .mermaid-block pre.mermaid { visibility: hidden; height: 0; margin: 0; }
+.markdown-body .mermaid-error { text-align: left; color: #cf222e; white-space: pre-wrap; }
+
+/* Front matter */
+.markdown-body table.front-matter { font-size: .85em; margin-bottom: 1.5em; }
+.markdown-body table.front-matter th { text-align: left; color: var(--muted); font-weight: 600; }
+.markdown-body pre.front-matter { font-size: .85em; }
+
+/* Definition lists */
+.markdown-body dl { padding: 0; }
+.markdown-body dt { font-weight: 600; margin-top: 1em; }
+.markdown-body dd { margin: 0 0 0 1.5em; }
+
+/* Footnotes */
+.markdown-body .footnotes { font-size: .85em; color: var(--muted); }
+.markdown-body .footnotes-sep { margin-top: 2.5em; }
+.markdown-body .footnote-ref a { text-decoration: none; }
+
+/* Brief highlight when jumping to an element */
+@keyframes mdstudio-flash { from { background-color: var(--flash); } to { background-color: transparent; } }
+.flash { animation: mdstudio-flash 1.2s ease-out; border-radius: 4px; }
+
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  :root { --bg: #ffffff; --fg: #1f2328; --subtle-bg: #f6f8fa; --border: #d1d9e0; --muted: #59636e; }
+  .markdown-body { max-width: none; padding: 0; }
+  .copy-button { display: none !important; }
+  .markdown-body pre, .markdown-body table, .markdown-body img, .markdown-body .mermaid-block, .markdown-body blockquote { break-inside: avoid; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { break-after: avoid; }
+}
