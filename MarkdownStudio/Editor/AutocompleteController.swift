@@ -17,6 +17,7 @@ final class AutocompleteController {
     private lazy var panel: NSPanel = makePanel()
     var documentDirectory: URL?
     var isEnabled = true
+    nonisolated(unsafe) private var resignObserver: NSObjectProtocol?
 
     var isVisible: Bool { panel.isVisible }
 
@@ -26,9 +27,13 @@ final class AutocompleteController {
             self?.model.selection = index
             self?.accept()
         }
-        NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] _ in
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.hide() }
         }
+    }
+
+    deinit {
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
     }
 
     private func makePanel() -> NSPanel {

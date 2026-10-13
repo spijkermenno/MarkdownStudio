@@ -64,7 +64,7 @@ final class MarkdownHighlighter {
     /// Re-highlights after an edit in `editedRange`.
     func highlightEdit(_ storage: NSTextStorage, editedRange: NSRange) {
         let newCodeRanges = Self.fencedCodeRanges(in: storage.string)
-        if newCodeRanges.count != codeRanges.count || zip(newCodeRanges, codeRanges).contains(where: { $0.location != $1.location }) {
+        if newCodeRanges != codeRanges {
             codeRanges = newCodeRanges
             highlight(storage, in: NSRange(location: 0, length: storage.length))
             return

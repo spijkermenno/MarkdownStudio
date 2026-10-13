@@ -41,6 +41,8 @@ final class DocumentSession {
     @ObservationIgnored private var sessionGoal: Int?
     @ObservationIgnored private let untitledKey = "untitled-" + UUID().uuidString
     @ObservationIgnored private var hasAnalyzed = false
+    /// The text the current problem list was computed for.
+    @ObservationIgnored private var analyzedText = ""
 
     private(set) var outline: [OutlineItem] = []
     private(set) var statistics = DocumentStatistics()
@@ -129,10 +131,8 @@ final class DocumentSession {
         preview.onToggleTask = { [weak self] line in
             self?.editor.toggleTask(atLine: line)
         }
-        preview.onOpenDocument = { url in
-            NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
-                if let error { NSApp.presentError(error) }
-            }
+        preview.onOpenDocument = { url, anchor in
+            WorkspaceNavigator.open(url, anchor: anchor)
         }
         return preview
     }
@@ -230,6 +230,7 @@ final class DocumentSession {
             if self.statistics != statistics { self.statistics = statistics }
             self.updateGoal(text: text, previousWords: previousWords)
             if self.problems != problems { self.problems = problems }
+            self.analyzedText = text
             // Only underline when the text hasn't moved on since the check started.
             if self.editor.text == text { self.editor.showProblems(problems) }
         }
@@ -239,11 +240,26 @@ final class DocumentSession {
 
     func select(_ problem: DocumentProblem) {
         if viewMode == .preview { viewMode = .split }
-        editor.select(problem.range)
+        // Ranges can be slightly out of date; the line number is the stable part.
+        if editor.text == analyzedText {
+            editor.select(problem.range)
+        } else {
+            editor.reveal(line: problem.line)
+        }
     }
 
+    /// The problem's fix is recomputed on the current text: the list can be a
+    /// few hundred milliseconds older than the text, and stale ranges would
+    /// edit the wrong characters (or fall outside the text).
     func fix(_ problem: DocumentProblem) {
-        guard let fix = problem.fix else { return }
+        let current = DocumentChecker.check(editor.text, documentDirectory: fileURL?.deletingLastPathComponent())
+        guard let fresh = current.first(where: { $0.message == problem.message && $0.line == problem.line })
+                ?? current.first(where: { $0.message == problem.message }),
+              let fix = fresh.fix
+        else {
+            scheduleAnalysis(editor.text, delay: 0)
+            return
+        }
         if viewMode == .preview { viewMode = .split }
         editor.apply(fix.edit, actionName: fix.title)
     }

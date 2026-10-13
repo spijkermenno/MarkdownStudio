@@ -40,7 +40,9 @@
     if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
     if (url.slice(0, 2) === '//') return 'https:' + url;
     if (url.charAt(0) === '/') return 'mdstudio://file' + url;
-    return 'mdstudio://doc/' + url;
+    // The path goes in a query parameter: in the URL path the browser would
+    // collapse "../" against the root before the request reaches the app.
+    return 'mdstudio://doc/?p=' + encodeURIComponent(url);
   }
 
   DOMPurify.addHook('afterSanitizeAttributes', function (node) {
@@ -378,7 +380,8 @@
         ['src', 'href', 'poster'].forEach(function (attr) {
           const value = el.getAttribute(attr);
           if (!value) return;
-          if (value.indexOf('mdstudio://doc/') === 0) el.setAttribute(attr, value.slice('mdstudio://doc/'.length));
+          if (value.indexOf('mdstudio://doc/?p=') === 0) el.setAttribute(attr, decodeURIComponent(value.slice('mdstudio://doc/?p='.length)));
+          else if (value.indexOf('mdstudio://doc/') === 0) el.setAttribute(attr, value.slice('mdstudio://doc/'.length));
           else if (value.indexOf('mdstudio://file/') === 0) el.setAttribute(attr, 'file:///' + value.slice('mdstudio://file/'.length));
         });
       });

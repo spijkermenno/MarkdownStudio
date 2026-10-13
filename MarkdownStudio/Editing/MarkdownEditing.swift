@@ -295,7 +295,12 @@ nonisolated enum MarkdownEditing {
             let delimiter = (line as NSString).substring(with: m.range(at: 3))
             let space = (line as NSString).substring(with: m.range(at: 4))
             let task = m.range(at: 5).location != NSNotFound ? "[ ] " : ""
-            continuation = indent + "\(number + 1)" + delimiter + space + task
+            // In a list that repeats one number ("1. 1. 1."), keep repeating it.
+            let previousLine = lineRange.location > 0 ? ns.substring(with: ns.lineContentRange(at: lineRange.location - 1)) : ""
+            let previousNumber = orderedLine.firstMatch(in: previousLine, range: NSRange(location: 0, length: previousLine.utf16Length))
+                .map { Int((previousLine as NSString).substring(with: $0.range(at: 2))) ?? -1 }
+            let next = previousNumber == number ? number : number + 1
+            continuation = indent + "\(next)" + delimiter + space + task
         } else if let m = quoteLine.firstMatch(in: line, range: full) {
             marker = (line as NSString).substring(with: m.range)
             continuation = marker!.hasSuffix(" ") ? marker : marker! + " "

@@ -21,7 +21,8 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
     var onScroll: ((_ line: Double, _ atBottom: Bool) -> Void)?
     var onReveal: ((Int) -> Void)?
     var onToggleTask: ((Int) -> Void)?
-    var onOpenDocument: ((URL) -> Void)?
+    /// Opens a linked Markdown document, optionally at a heading anchor.
+    var onOpenDocument: ((URL, String?) -> Void)?
 
     var documentDirectory: URL? {
         get { schemeHandler.documentDirectory }
@@ -181,7 +182,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         if let fileURL = schemeHandler.fileURL(for: url) {
             let isMarkdown = ["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "txt"].contains(fileURL.pathExtension.lowercased())
             if isMarkdown, let onOpenDocument {
-                onOpenDocument(fileURL)
+                onOpenDocument(fileURL, PreviewSchemeHandler.fragment(in: url))
             } else {
                 NSWorkspace.shared.open(fileURL)
             }

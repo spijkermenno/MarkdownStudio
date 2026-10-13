@@ -120,6 +120,8 @@ final class MarkdownTextView: NSTextView {
 
         // Step over an auto-inserted closing character.
         if selection.length == 0, Self.closers.contains(typed), next == typed {
+            // Only the caret moves, so no text change will consume the typing flag.
+            lastChangeWasTyping = false
             setSelectedRange(NSRange(location: selection.location + 1, length: 0))
             return
         }

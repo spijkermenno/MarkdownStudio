@@ -106,8 +106,17 @@ final class Workspace {
 
     /// Whether a file lives inside the open folder.
     func contains(_ url: URL?) -> Bool {
-        guard let url, let root = rootURL?.path else { return false }
-        return url.standardizedFileURL.path.hasPrefix(root + "/")
+        guard let url, let rootURL else { return false }
+        return Self.isPath(url, inside: rootURL)
+    }
+
+    /// Compares real paths, so folders reached through a symlink still match.
+    /// The parent folder is resolved separately because resolving only works
+    /// for paths that exist (a file may not be saved yet).
+    nonisolated static func isPath(_ url: URL, inside folder: URL) -> Bool {
+        let root = folder.resolvingSymlinksInPath().path
+        let resolved = url.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(url.lastPathComponent).path
+        return resolved.hasPrefix(root + "/")
     }
 
     /// Brings forward a window that shows a file from this folder, or opens one:
@@ -163,8 +172,10 @@ final class Workspace {
     }
 
     func relativePath(of url: URL) -> String {
-        guard let root = rootURL?.path, url.path.hasPrefix(root + "/") else { return url.lastPathComponent }
-        return String(url.path.dropFirst(root.count + 1))
+        guard let root = rootURL?.resolvingSymlinksInPath().path else { return url.lastPathComponent }
+        let path = url.resolvingSymlinksInPath().path
+        guard path.hasPrefix(root + "/") else { return url.lastPathComponent }
+        return String(path.dropFirst(root.count + 1))
     }
 
     // MARK: - Search
@@ -235,10 +246,12 @@ final class Workspace {
         }
         var coordinationError: NSError?
         var moveError: Error?
-        NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: source, options: .forMoving,
-                                                         writingItemAt: destination, options: .forReplacing,
-                                                         error: &coordinationError) { from, to in
-            let coordinator = NSFileCoordinator(filePresenter: nil)
+        // The coordinator that performs the write must also announce the move,
+        // or open documents (file presenters) don't learn their new URL.
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.coordinate(writingItemAt: source, options: .forMoving,
+                               writingItemAt: destination, options: .forReplacing,
+                               error: &coordinationError) { from, to in
             coordinator.item(at: from, willMoveTo: to)
             do {
                 try FileManager.default.moveItem(at: from, to: to)
@@ -270,8 +283,9 @@ final class Workspace {
 
 /// Opens files from the sidebar, Quick Open and search, optionally at a line.
 enum WorkspaceNavigator {
-    /// Line jumps waiting for a document window to appear.
+    /// Line jumps and heading anchors waiting for a document window to appear.
     static var pendingLines: [String: Int] = [:]
+    static var pendingAnchors: [String: String] = [:]
     /// Sessions of open documents, by file path.
     private static var sessions: [String: WeakSession] = [:]
 
@@ -300,16 +314,28 @@ enum WorkspaceNavigator {
         if let line = pendingLines.removeValue(forKey: key) {
             DispatchQueue.main.async { session.goToLine(line + 1) }
         }
+        if let anchor = pendingAnchors.removeValue(forKey: key) {
+            DispatchQueue.main.async { reveal(anchor, in: session) }
+        }
     }
 
-    static func open(_ url: URL, line: Int? = nil) {
+    /// Scrolls to the heading whose ID is `anchor`.
+    private static func reveal(_ anchor: String, in session: DocumentSession) {
+        if let heading = OutlineParser.parse(session.text).first(where: { $0.anchor == anchor }) {
+            session.jump(toLine: heading.line)
+        }
+    }
+
+    static func open(_ url: URL, line: Int? = nil, anchor: String? = nil) {
         let key = url.standardizedFileURL.path
         if let session = sessions[key]?.session {
             session.window?.makeKeyAndOrderFront(nil)
             if let line { session.goToLine(line + 1) }
+            if let anchor { reveal(anchor, in: session) }
             return
         }
         if let line { pendingLines[key] = line }
+        if let anchor { pendingAnchors[key] = anchor }
         NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
             if let error { NSApp.presentError(error) }
         }

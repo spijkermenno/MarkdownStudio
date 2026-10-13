@@ -25,7 +25,7 @@
       if (!node.hasAttribute || !node.hasAttribute(attr)) return;
       const url = node.getAttribute(attr);
       if (!url || url.charAt(0) === '#' || /^[a-z][a-z0-9+.-]*:/i.test(url)) return;
-      node.setAttribute(attr, url.charAt(0) === '/' ? 'mdstudio://file' + url : 'mdstudio://doc/' + url);
+      node.setAttribute(attr, url.charAt(0) === '/' ? 'mdstudio://file' + url : 'mdstudio://doc/?p=' + encodeURIComponent(url));
     });
   });
 
@@ -149,11 +149,33 @@
   });
   window.addEventListener('resize', layout);
 
+  function setStylesheet(link, href) {
+    if (link.getAttribute('href') === href && link.sheet) return Promise.resolve();
+    return new Promise(function (resolve) {
+      link.addEventListener('load', resolve, { once: true });
+      link.addEventListener('error', resolve, { once: true });
+      setTimeout(resolve, 2000);
+      link.setAttribute('href', href);
+    });
+  }
+
+  function waitForImages() {
+    const pending = Array.prototype.filter.call(deck.querySelectorAll('img'), function (img) { return !img.complete; });
+    return Promise.all(pending.map(function (img) {
+      return new Promise(function (resolve) {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+        setTimeout(resolve, 3000);
+      });
+    }));
+  }
+
   window.MDSlides = {
     // options: { theme, customCSS, math, mermaid, separator, startAt }
     load: function (markdown, options) {
       options = options || {};
-      document.getElementById('theme-css').setAttribute('href', 'mdstudio://app/themes/' + (options.theme || 'github') + '.css');
+      const themeReady = setStylesheet(document.getElementById('theme-css'),
+                                       'mdstudio://app/themes/' + (options.theme || 'github') + '.css');
       document.getElementById('custom-css').textContent = options.customCSS || '';
       const renderer = MDStudio.createRenderer({ math: options.math !== false, mermaid: options.mermaid !== false, frontMatter: 'hide' });
       const parts = split(renderer.render(markdown).html, options.separator || 'auto');
@@ -173,7 +195,9 @@
         return { el: el, notes: part.notes };
       });
       renderMath(deck);
-      return renderMermaid().then(function () {
+      // Measure only once the theme CSS, diagrams and images are in, so the
+      // font fitting is right and exported PDFs include the images.
+      return Promise.all([themeReady, renderMermaid()]).then(waitForImages).then(function () {
         slides.forEach(function (s) { fit(s.el); });
         layout();
         startedAt = Date.now();

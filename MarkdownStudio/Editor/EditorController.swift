@@ -48,7 +48,6 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
     private let ruler: LineNumberRulerView
     private let highlighter = MarkdownHighlighter()
     private(set) lazy var autocomplete = AutocompleteController(textView: textView)
-    private var problemRanges: [NSRange] = []
     private(set) var lineIndex = LineIndex("")
     private(set) var configuration = EditorConfiguration()
 
@@ -261,7 +260,9 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         // Keep a table of contents in sync with the headings. The update joins
         // the same undo step as the edit that caused it, and its nested
         // textDidChange reports the final text.
-        if !isUpdatingTableOfContents, let edit = TableOfContents.update(text) {
+        let undoManager = textView.undoManager
+        let replayingUndo = undoManager?.isUndoing == true || undoManager?.isRedoing == true
+        if !isUpdatingTableOfContents, !replayingUndo, let edit = TableOfContents.update(text) {
             isUpdatingTableOfContents = true
             textView.applyKeepingSelection(edit)
             isUpdatingTableOfContents = false
@@ -319,8 +320,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
 
     func topVisibleLine() -> Double {
         guard let layoutManager = textView.layoutManager, let container = textView.textContainer else { return 0 }
-        let y = scrollView.contentView.bounds.minY - textView.textContainerOrigin.y
-        guard y > 0, layoutManager.numberOfGlyphs > 0 else { return 0 }
+        let y = scrollView.contentView.bounds.minY - textView.textContainerOrigin.y + Self.syncMargin
+        guard scrollView.contentView.bounds.minY > 0, layoutManager.numberOfGlyphs > 0 else { return 0 }
         let glyph = layoutManager.glyphIndex(for: NSPoint(x: 0, y: y), in: container)
         let char = layoutManager.characterIndexForGlyph(at: glyph)
         let line = lineIndex.line(containing: char)
@@ -328,6 +329,9 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         let fraction = rect.height > 0 ? min(1, max(0, (y - rect.minY) / rect.height)) : 0
         return Double(line) + fraction
     }
+
+    /// How far below the top edge the synced line sits, like the preview's top padding.
+    private static let syncMargin: CGFloat = 16
 
     /// Bounding rect of a source line in text-container coordinates.
     private func rect(forLine line: Int) -> NSRect {
@@ -351,7 +355,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         } else {
             let whole = Int(line.rounded(.down))
             let rect = rect(forLine: whole)
-            y = max(0, rect.minY + CGFloat(line - Double(whole)) * rect.height + textView.textContainerOrigin.y - textView.textContainerInset.height)
+            // Inverse of topVisibleLine(): the line sits `syncMargin` below the top edge.
+            y = line <= 0 ? 0 : max(0, rect.minY + CGFloat(line - Double(whole)) * rect.height + textView.textContainerOrigin.y - Self.syncMargin)
         }
         clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
         scrollView.reflectScrolledClipView(clip)
@@ -378,11 +383,10 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
     func showProblems(_ problems: [DocumentProblem]) {
         guard let layoutManager = textView.layoutManager else { return }
         let length = (textView.string as NSString).length
-        for range in problemRanges where NSMaxRange(range) <= length {
-            layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
-            layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
-        }
-        problemRanges = []
+        // Underlines move with edits, so clear them everywhere rather than at remembered ranges.
+        let all = NSRange(location: 0, length: length)
+        layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: all)
+        layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: all)
         let style = NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue
         for problem in problems {
             let range = NSIntersectionRange(problem.range, NSRange(location: 0, length: length))
@@ -391,7 +395,6 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
                 .underlineStyle: style,
                 .underlineColor: problem.severity == .warning ? NSColor.systemOrange : NSColor.systemBlue,
             ], forCharacterRange: range)
-            problemRanges.append(range)
         }
     }
 

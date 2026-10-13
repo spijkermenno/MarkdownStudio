@@ -23,8 +23,16 @@ nonisolated enum TableOfContents {
     /// Line numbers of the existing markers, if the document has a TOC.
     static func markers(in text: String) -> (start: Int, end: Int)? {
         let lines = text.components(separatedBy: "\n")
-        guard let start = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == startMarker }),
-              let end = lines[(start + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == endMarker })
+        // Markers shown inside a code block (e.g. documentation of this feature) don't count.
+        let index = LineIndex(text)
+        let code = MarkdownHighlighter.fencedCodeRanges(in: text)
+        func isMarker(_ i: Int, _ marker: String) -> Bool {
+            guard lines[i].trimmingCharacters(in: .whitespaces) == marker else { return false }
+            let offset = index.start(ofLine: i)
+            return !code.contains { NSLocationInRange(offset, $0) }
+        }
+        guard let start = lines.indices.first(where: { isMarker($0, startMarker) }),
+              let end = lines.indices.first(where: { $0 > start && isMarker($0, endMarker) })
         else { return nil }
         return (start, end)
     }

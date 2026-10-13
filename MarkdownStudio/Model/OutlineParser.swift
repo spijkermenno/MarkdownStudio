@@ -22,6 +22,7 @@ nonisolated enum OutlineParser {
         let lines = text.components(separatedBy: "\n").map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
         var items: [OutlineItem] = []
         var customIDs: [String?] = []
+        var slugTexts: [String] = []
         var fenceMarker: String?
         var start = 0
 
@@ -57,11 +58,13 @@ nonisolated enum OutlineParser {
                 let title = m.range(at: 2).location != NSNotFound ? (line as NSString).substring(with: m.range(at: 2)) : ""
                 items.append(OutlineItem(level: level, title: clean(title), line: i))
                 customIDs.append(customID(title))
+                slugTexts.append(HeadingSlug.text(fromHeading: title))
                 previousIsParagraph = false
             } else if previousIsParagraph, let m = setext.firstMatch(in: line, range: range) {
                 let level = (line as NSString).substring(with: m.range(at: 1)).hasPrefix("=") ? 1 : 2
                 items.append(OutlineItem(level: level, title: clean(lines[i - 1]), line: i - 1))
                 customIDs.append(customID(lines[i - 1]))
+                slugTexts.append(HeadingSlug.text(fromHeading: lines[i - 1]))
                 previousIsParagraph = false
             } else {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -70,9 +73,7 @@ nonisolated enum OutlineParser {
             }
             i += 1
         }
-        let anchors = HeadingSlug.uniqueIDs(items.enumerated().map { index, item in
-            (item.title == "Untitled" ? "" : item.title, customIDs[index])
-        })
+        let anchors = HeadingSlug.uniqueIDs(items.indices.map { (slugTexts[$0], customIDs[$0]) })
         for index in items.indices { items[index].anchor = anchors[index] }
         return items
     }
@@ -84,6 +85,12 @@ nonisolated enum OutlineParser {
 
     /// Strips inline Markdown so the outline shows plain titles.
     static func clean(_ title: String) -> String {
+        let s = strip(title)
+        return s.isEmpty ? "Untitled" : s
+    }
+
+    /// Inline Markdown removed, without the "Untitled" placeholder.
+    static func strip(_ title: String) -> String {
         var s = title.trimmingCharacters(in: .whitespaces)
         let replacements: [(String, String)] = [
             ("\\s*\\{#[\\w\\-:.]+\\}\\s*$", ""),            // custom heading id
@@ -97,6 +104,6 @@ nonisolated enum OutlineParser {
         for (pattern, template) in replacements {
             s = s.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
         }
-        return s.isEmpty ? "Untitled" : s
+        return s
     }
 }

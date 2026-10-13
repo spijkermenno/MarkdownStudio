@@ -76,6 +76,9 @@ nonisolated extension MarkdownEditing {
     static func renumberList(_ text: String, line: Int, selection: NSRange? = nil) -> TextEdit? {
         let lines = text.components(separatedBy: "\n")
         guard line >= 0, line < lines.count else { return nil }
+        // Numbered lines inside code blocks aren't lists.
+        let lineStart = lines[..<line].reduce(0) { $0 + $1.utf16Length + 1 }
+        if MarkdownHighlighter.fencedCodeRanges(in: text).contains(where: { NSLocationInRange(lineStart, $0) }) { return nil }
 
         // The ordered item this line belongs to.
         var anchor = line
@@ -106,6 +109,12 @@ nonisolated extension MarkdownEditing {
             if orderedMatch(lines[i]) != nil, indentWidth(lines[i]) == anchorIndent { end = i }
             i += 1
         }
+
+        // Lists written with the same number on every item ("1. 1. 1.") are left alone.
+        let numbers = (start...end).compactMap { i -> String? in
+            indentWidth(lines[i]) == anchorIndent ? orderedMatch(lines[i])?.number : nil
+        }
+        if numbers.count > 1, Set(numbers).count == 1 { return nil }
 
         var newLines = Array(lines[start...end])
         var number = Int(orderedMatch(lines[start])!.number) ?? 1

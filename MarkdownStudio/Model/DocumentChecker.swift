@@ -197,11 +197,9 @@ nonisolated enum DocumentChecker {
         let masked = NSMutableString(string: text)
         func blank(_ range: NSRange) {
             guard range.length > 0 else { return }
-            let original = masked.substring(with: range)
-            let spaces = String(original.map { $0 == "\n" ? "\n" : " " }.joined())
-            // Keep UTF-16 length identical even for multi-unit characters.
-            let padded = spaces.utf16Length == range.length ? spaces : String(repeating: " ", count: range.length)
-            masked.replaceCharacters(in: range, with: padded)
+            // One replacement unit per UTF-16 unit, keeping \r and \n, so offsets and lines stay intact.
+            let units = masked.substring(with: range).utf16.map { $0 == 0x0A || $0 == 0x0D ? $0 : 0x20 }
+            masked.replaceCharacters(in: range, with: String(utf16CodeUnits: units, count: units.count))
         }
         if let fm = MarkdownHighlighter.frontMatterRange(in: text) { blank(fm) }
         for range in MarkdownHighlighter.fencedCodeRanges(in: text) { blank(range) }

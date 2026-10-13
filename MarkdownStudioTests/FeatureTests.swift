@@ -59,7 +59,7 @@ struct RenumberTests {
     }
 
     @Test func keepsCaretOnItsText() {
-        let text = "9. a\n9. b\n9. c"
+        let text = "9. a\n9. b\n3. c"
         let caretLocation = (text as NSString).range(of: "c").location
         let edit = MarkdownEditing.renumberList(text, line: 2, selection: NSRange(location: caretLocation, length: 0))
         #expect(show(text, edit) == "9. a\n10. b\n11. |c")

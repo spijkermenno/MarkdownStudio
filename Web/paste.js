@@ -56,7 +56,8 @@
       const clean = purifier.sanitize(normalize(html), { FORBID_ATTR: ['style', 'class'] });
       return service.turndown(clean)
         .replace(/ /g, ' ')
-        .replace(/[ \t]+\n/g, '\n')
+        // Strip trailing whitespace, but keep the two spaces that mark a <br> hard break.
+        .replace(/[ \t]+\n/g, (m) => (/^ {2,}\n$/.test(m) ? '  \n' : '\n'))
         .replace(/\n{3,}/g, '\n\n')
         .trim();
     },
