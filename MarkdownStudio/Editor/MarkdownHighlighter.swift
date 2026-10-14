@@ -30,17 +30,61 @@ final class MarkdownHighlighter {
         }
     }
 
+    /// Every color that draws text reaches at least 4.5:1 on the editor (and code)
+    /// background in light and dark mode, and more with Increase Contrast.
     enum Colors {
         static let text = NSColor.textColor
-        static let syntax = NSColor.tertiaryLabelColor
-        static let secondary = NSColor.secondaryLabelColor
+        static let syntax = adaptive("syntax", Swatch.syntax)
+        static let secondary = adaptive("secondary", Swatch.secondary)
         static let link = NSColor.linkColor
-        static let code = NSColor.systemPink
+        static let code = adaptive("code", Swatch.code)
         static let codeBackground = NSColor.quaternaryLabelColor.withAlphaComponent(0.08)
-        static let listMarker = NSColor.systemOrange
-        static let html = NSColor.systemTeal
-        static let math = NSColor.systemPurple
+        static let listMarker = adaptive("listMarker", Swatch.listMarker)
+        static let html = adaptive("html", Swatch.html)
+        static let math = adaptive("math", Swatch.math)
         static let highlight = NSColor.systemYellow.withAlphaComponent(0.3)
+        /// Line numbers in the gutter.
+        static let lineNumber = syntax
+
+        /// sRGB values for light, dark, and both with Increase Contrast.
+        struct Swatch: Sendable {
+            var light: Int, dark: Int, lightHigh: Int, darkHigh: Int
+
+            static let syntax = Swatch(light: 0x6B6B70, dark: 0x9B9BA1, lightHigh: 0x4A4A4F, darkHigh: 0xC0C0C6)
+            static let secondary = Swatch(light: 0x5F5F64, dark: 0xA8A8AE, lightHigh: 0x3F3F44, darkHigh: 0xCACACF)
+            static let code = Swatch(light: 0xB01A66, dark: 0xFF7EB3, lightHigh: 0x8A0F4E, darkHigh: 0xFFA3CA)
+            static let listMarker = Swatch(light: 0xA64B00, dark: 0xFFA94D, lightHigh: 0x7F3900, darkHigh: 0xFFC27F)
+            static let html = Swatch(light: 0x00727C, dark: 0x5FD3DE, lightHigh: 0x00565E, darkHigh: 0x8BE5EE)
+            static let math = Swatch(light: 0x7B2FB8, dark: 0xC79BFF, lightHigh: 0x5E1F92, darkHigh: 0xD9BBFF)
+            static let all: [(String, Swatch)] = [("syntax", syntax), ("secondary", secondary), ("code", code),
+                                                  ("listMarker", listMarker), ("html", html), ("math", math)]
+
+            func value(dark isDark: Bool, highContrast: Bool) -> Int {
+                switch (isDark, highContrast) {
+                case (false, false): light
+                case (true, false): dark
+                case (false, true): lightHigh
+                case (true, true): darkHigh
+                }
+            }
+        }
+
+        /// Resolved at draw time, so it follows Light/Dark and Increase Contrast
+        /// (which macOS reports as a setting, not as the appearance's name).
+        private static func adaptive(_ name: String, _ swatch: Swatch) -> NSColor {
+            NSColor(name: "MarkdownStudio.\(name)") { appearance in
+                let match = appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+                let isDark = match == .darkAqua || match == .accessibilityHighContrastDarkAqua
+                let highContrast = match == .accessibilityHighContrastAqua || match == .accessibilityHighContrastDarkAqua
+                    || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+                return rgb(swatch.value(dark: isDark, highContrast: highContrast))
+            }
+        }
+
+        private static func rgb(_ hex: Int) -> NSColor {
+            NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        }
     }
 
     func configure(_ configuration: EditorConfiguration) {

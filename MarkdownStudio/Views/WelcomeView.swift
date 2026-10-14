@@ -81,9 +81,8 @@ struct WelcomeView: View {
                     .contentShape(Rectangle())
                 }
                 .menuStyle(.button)
-                .buttonStyle(.plain)
+                .buttonStyle(CardButtonStyle())
                 .menuIndicator(.hidden)
-                .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
             }
             .padding(.top, 28)
             .padding(.horizontal, 36)
@@ -122,8 +121,9 @@ struct WelcomeView: View {
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+        .buttonStyle(CardButtonStyle())
+        .accessibilityLabel(title)
+        .accessibilityHint(shortcut.isEmpty ? "" : "Shortcut \(shortcut)")
     }
 
     // MARK: - Right: recent files
@@ -143,10 +143,18 @@ struct WelcomeView: View {
                 Spacer()
             } else {
                 List(recents, id: \.self) { url in
-                    RecentFileRow(url: url)
-                        .contentShape(Rectangle())
-                        .onTapGesture { open(url) }
-                        .help(url.path)
+                    // A button, so recent files open from the keyboard and with VoiceOver too.
+                    Button { open(url) } label: {
+                        RecentFileRow(url: url)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(url.lastPathComponent)
+                    .accessibilityValue((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                    .accessibilityAddTraits(.isButton)
+                    .help(url.path)
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)

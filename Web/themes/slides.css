@@ -22,7 +22,12 @@ body { background: var(--slide-surround, #000); cursor: default; }
 .slide pre { font-size: 0.75em; }
 
 #progress { position: fixed; left: 0; right: 0; bottom: 0; height: 3px; background: transparent; }
-#progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+#progress-bar { height: 100%; width: 0; background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  #progress-bar { transition: width .2s ease; }
+}
+/* Headings get focus on each slide change for VoiceOver; no ring needed. */
+.slide [tabindex="-1"]:focus { outline: none; }
 
 #notes-panel {
   position: fixed; left: 24px; right: 24px; bottom: 18px; max-height: 32vh; overflow: auto;

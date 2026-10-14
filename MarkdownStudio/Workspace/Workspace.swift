@@ -235,6 +235,26 @@ final class Workspace {
     }
 
     /// Moves or renames through NSFileCoordinator, so open documents follow the file.
+    /// Folders `item` can be moved into from the "Move To" menu: the open folder and
+    /// every folder in it, except the item's current folder, the item itself and
+    /// (for folders) anything inside it. Sorted by relative path.
+    nonisolated static func moveTargets(for item: URL, root: URL, tree: [FileNode]) -> [URL] {
+        var folders = [root]
+        func collect(_ nodes: [FileNode]) {
+            for node in nodes where node.isDirectory {
+                folders.append(node.url)
+                collect(node.children ?? [])
+            }
+        }
+        collect(tree)
+        let itemPath = item.standardizedFileURL.path
+        let parentPath = item.deletingLastPathComponent().standardizedFileURL.path
+        return folders.filter { folder in
+            let path = folder.standardizedFileURL.path
+            return path != parentPath && path != itemPath && !path.hasPrefix(itemPath + "/")
+        }
+    }
+
     func move(_ source: URL, to destination: URL) {
         guard source.standardizedFileURL != destination.standardizedFileURL else { return }
         guard !FileManager.default.fileExists(atPath: destination.path) else {

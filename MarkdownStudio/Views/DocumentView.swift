@@ -7,6 +7,7 @@ struct DocumentView: View {
     @State private var session: DocumentSession
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
     @SceneStorage("viewMode") private var storedViewMode = ""
@@ -75,9 +76,9 @@ struct DocumentView: View {
                 content
                     .overlay(alignment: .bottom) {
                         if let toast = session.toast {
-                            ToastView(toast: toast) { session.toast = nil }
+                            ToastView(toast: toast, hovering: { session.isToastHovered = $0 }) { session.toast = nil }
                                 .padding(.bottom, 14)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                         }
                     }
                     .animation(.easeOut(duration: 0.2), value: session.toast?.id)

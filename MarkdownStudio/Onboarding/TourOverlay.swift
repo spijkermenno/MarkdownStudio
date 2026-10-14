@@ -52,6 +52,9 @@ struct TourStep {
 /// The floating card that walks through the tour steps.
 struct TourCard: View {
     let session: DocumentSession
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Moves VoiceOver to the card on every step; keyboard focus stays where it is.
+    @AccessibilityFocusState private var isCardFocused: Bool
 
     var body: some View {
         if let index = session.tourStep {
@@ -79,6 +82,8 @@ struct TourCard: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .help("End the tour. It starts again next time until you finish it.")
+                    .accessibilityLabel("End tour")
+                    .accessibilityHint("The tour starts again next time until you finish it")
                 }
                 HStack {
                     HStack(spacing: 5) {
@@ -104,16 +109,34 @@ struct TourCard: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.separator))
             .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
-            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Tour, step \(index + 1) of \(TourStep.all.count)")
+            .accessibilityFocused($isCardFocused)
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
             .id(index)
+            .onAppear {
+                // The card is recreated for every step (`.id`), so this runs on each change.
+                AccessibilitySupport.announce(Self.announcement(for: index), highPriority: true)
+                isCardFocused = true
+            }
         }
     }
 }
 
+extension TourCard {
+    /// What VoiceOver says when a step appears, e.g. "Tour, step 2 of 8. Three ways to view a document. …".
+    static func announcement(for index: Int) -> String {
+        let step = TourStep.all[index]
+        return "Tour, step \(index + 1) of \(TourStep.all.count). \(step.title). \(step.message)"
+    }
+}
+
 /// An accent ring around the part of the window the current tour step is about.
+/// It pulses three times to draw the eye, then stays still (or never moves with Reduce Motion).
 struct TourHighlight: ViewModifier {
     let active: Bool
     var inset: CGFloat = 3
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     func body(content: Content) -> some View {
@@ -123,10 +146,18 @@ struct TourHighlight: ViewModifier {
                     .strokeBorder(Color.accentColor, lineWidth: 3)
                     .padding(inset)
                     .opacity(pulse ? 0.45 : 1)
-                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
-                    .onAppear { pulse = true }
+                    .task {
+                        guard !reduceMotion else { return }
+                        for _ in 0..<3 {
+                            withAnimation(.easeInOut(duration: 0.9)) { pulse = true }
+                            try? await Task.sleep(for: .seconds(0.9))
+                            withAnimation(.easeInOut(duration: 0.9)) { pulse = false }
+                            try? await Task.sleep(for: .seconds(0.9))
+                        }
+                    }
                     .onDisappear { pulse = false }
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
     }

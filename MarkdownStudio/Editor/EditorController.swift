@@ -147,6 +147,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         textView.isContinuousSpellCheckingEnabled = configuration.spellCheck
         textView.htmlConverter = configuration.pasteAsMarkdown ? htmlConverter : nil
         autocomplete.isEnabled = configuration.autocomplete
+        autocomplete.fontSize = configuration.font.pointSize
         if !configuration.autocomplete { autocomplete.hide() }
         scrollView.rulersVisible = configuration.showLineNumbers
         highlighter.configure(configuration)
@@ -387,12 +388,14 @@ final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegat
         let all = NSRange(location: 0, length: length)
         layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: all)
         layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: all)
-        let style = NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue
+        // Warnings and notes differ in pattern as well as color: thick dots and thin dashes.
+        let warningStyle = NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue
+        let noteStyle = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDash.rawValue
         for problem in problems {
             let range = NSIntersectionRange(problem.range, NSRange(location: 0, length: length))
             guard range.length > 0 else { continue }
             layoutManager.addTemporaryAttributes([
-                .underlineStyle: style,
+                .underlineStyle: problem.severity == .warning ? warningStyle : noteStyle,
                 .underlineColor: problem.severity == .warning ? NSColor.systemOrange : NSColor.systemBlue,
             ], forCharacterRange: range)
         }

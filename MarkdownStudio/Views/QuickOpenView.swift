@@ -47,9 +47,11 @@ struct QuickOpenView: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($focused)
+                    .accessibilityLabel("Quick Open")
+                    .accessibilityHint("Type part of a file name, use the arrow keys to choose, and press Return to open")
                     .onSubmit { open(results) }
-                    .onKeyPress(.downArrow) { selection = min(selection + 1, max(results.count - 1, 0)); return .handled }
-                    .onKeyPress(.upArrow) { selection = max(selection - 1, 0); return .handled }
+                    .onKeyPress(.downArrow) { moveSelection(by: 1, in: results); return .handled }
+                    .onKeyPress(.upArrow) { moveSelection(by: -1, in: results); return .handled }
                     .onKeyPress(.escape) { dismissWindow(id: QuickOpen.id); return .handled }
             }
             .padding(14)
@@ -63,25 +65,37 @@ struct QuickOpenView: View {
                 ScrollView {
                     VStack(spacing: 2) {
                         ForEach(Array(results.enumerated()), id: \.element.id) { index, candidate in
-                            HStack(spacing: 10) {
-                                Image(systemName: "doc.text")
-                                    .foregroundStyle(index == selection ? Color.white : .secondary)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(candidate.url.lastPathComponent).lineLimit(1)
-                                    Text(candidate.path)
-                                        .font(.caption)
-                                        .foregroundStyle(index == selection ? Color.white.opacity(0.8) : .secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.head)
+                            let isSelected = index == selection
+                            Button {
+                                selection = index
+                                open(results)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "doc.text")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(candidate.url.lastPathComponent).lineLimit(1)
+                                        Text(candidate.path)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.head)
+                                    }
+                                    Spacer()
                                 }
-                                Spacer()
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .foregroundStyle(.primary)
+                                // A tint plus an outline stays readable with every accent color.
+                                .background(isSelected ? Color.accentColor.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                                .overlay {
+                                    if isSelected { RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 1) }
+                                }
+                                .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .foregroundStyle(index == selection ? Color.white : .primary)
-                            .background(index == selection ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 6))
-                            .contentShape(Rectangle())
-                            .onTapGesture { selection = index; open(results) }
+                            .buttonStyle(.plain)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
                         }
                     }
                     .padding(6)
@@ -100,6 +114,16 @@ struct QuickOpenView: View {
         .background(WindowAccessor { window in
             QuickOpen.configure(window)
         })
+    }
+
+    private func moveSelection(by delta: Int, in results: [Candidate]) {
+        guard !results.isEmpty else { return }
+        selection = min(max(selection + delta, 0), results.count - 1)
+        // Focus stays in the search field, so tell VoiceOver which file Return opens.
+        if AccessibilitySupport.isVoiceOverRunning {
+            let candidate = results[selection]
+            AccessibilitySupport.announce("\(candidate.url.lastPathComponent), \(selection + 1) of \(results.count)")
+        }
     }
 
     private func open(_ results: [Candidate]) {

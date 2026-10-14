@@ -6,6 +6,7 @@ struct OnboardingView: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
     @Environment(\.newDocument) private var newDocument
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step: Int
     private let initialStep: Int
 
@@ -35,8 +36,8 @@ struct OnboardingView: View {
             .padding(.horizontal, 40)
             .padding(.top, 36)
             .id(step)
-            .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                    removal: .opacity))
+            .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                                              removal: .opacity))
 
             Divider()
             HStack {
@@ -54,11 +55,11 @@ struct OnboardingView: View {
                 .accessibilityLabel("Step \(step + 1) of \(Step.allCases.count)")
                 Spacer()
                 if step > 0 {
-                    Button("Back") { withAnimation(.easeOut(duration: 0.2)) { step -= 1 } }
+                    Button("Back") { withAnimation(.unlessReduceMotion(.easeOut(duration: 0.2))) { step -= 1 } }
                 }
                 if step < Step.allCases.count - 1 {
                     Button(step == 0 ? "Get Started" : "Continue") {
-                        withAnimation(.easeOut(duration: 0.2)) { step += 1 }
+                        withAnimation(.unlessReduceMotion(.easeOut(duration: 0.2))) { step += 1 }
                     }
                     .keyboardShortcut(.defaultAction)
                 } else {
@@ -105,6 +106,8 @@ private struct StepHeader: View {
 /// A selectable card used by the choice steps.
 private struct ChoiceTile<Preview: View>: View {
     let title: String
+    /// What the preview shows, for VoiceOver (which skips the drawing itself).
+    var description: String? = nil
     let isSelected: Bool
     let action: () -> Void
     @ViewBuilder let preview: Preview
@@ -117,6 +120,7 @@ private struct ChoiceTile<Preview: View>: View {
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+                    .accessibilityHidden(true)
                 HStack(spacing: 6) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(isSelected ? Color.accentColor : .secondary)
@@ -128,8 +132,11 @@ private struct ChoiceTile<Preview: View>: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .buttonStyle(CardButtonStyle(cornerRadius: 12, filled: false))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHint(description ?? "")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
@@ -269,7 +276,8 @@ private struct ThemeStep: View {
                        subtitle: "How the rendered document looks in the preview and in exported HTML and PDF.")
             HStack(spacing: 14) {
                 ForEach(PreviewTheme.allCases) { option in
-                    ChoiceTile(title: option.title, isSelected: theme == option, action: { theme = option }) {
+                    ChoiceTile(title: option.title, description: option.sampleDescription,
+                               isSelected: theme == option, action: { theme = option }) {
                         ThemeSample(theme: option)
                     }
                 }
@@ -348,6 +356,9 @@ private struct EditorStep: View {
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
                 .clipped()
+                // One short description instead of reading the sample list line by line.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Sample text at \(Int(fontSize)) points\(showLineNumbers ? ", with line numbers" : "")")
 
                 Form {
                     LabeledContent("Text size") {
@@ -427,6 +438,17 @@ private struct TourIntroStep: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
+        }
+    }
+}
+
+private extension PreviewTheme {
+    /// Read by VoiceOver in place of the drawn sample.
+    var sampleDescription: String {
+        switch self {
+        case .github: "Sans-serif text with ruled headings and shaded code"
+        case .academic: "Serif text with centered titles, like a paper"
+        case .minimal: "Light, airy text with plenty of space"
         }
     }
 }

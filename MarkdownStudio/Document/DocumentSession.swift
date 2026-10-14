@@ -16,6 +16,8 @@ final class DocumentSession {
     var distractionFree = false
     var isShowingGoToLine = false
     var toast: Toast?
+    /// The pointer is over the toast; it stays until the pointer leaves.
+    var isToastHovered = false
     var sidebarTab: SidebarTab = .outline
     /// An untitled document created for the open folder (e.g. an empty folder).
     var createdInWorkspace = false
@@ -116,6 +118,8 @@ final class DocumentSession {
     private func makePreview() -> PreviewController {
         let preview = PreviewController()
         preview.documentDirectory = fileURL?.deletingLastPathComponent()
+        // VoiceOver names the web area after the document instead of "Preview".
+        preview.documentTitle = title
         preview.zoom = zoom
         preview.configure(previewConfiguration)
         preview.render(editor.text)
@@ -145,6 +149,7 @@ final class DocumentSession {
         }
         editor.documentURL = fileURL
         preview.documentDirectory = fileURL?.deletingLastPathComponent()
+        preview.documentTitle = title
         preview.render(editor.text)
         watchFile()
         WorkspaceNavigator.register(self, for: fileURL)
@@ -354,8 +359,15 @@ final class DocumentSession {
     func showToast(_ message: String, systemImage: String = "info.circle", actionTitle: String? = nil, action: (() -> Void)? = nil) {
         let toast = Toast(message: message, systemImage: systemImage, actionTitle: actionTitle, action: action)
         self.toast = toast
+        isToastHovered = false
+        // Toasts are visual only, so VoiceOver hears them too.
+        AccessibilitySupport.announce(message)
         Task { [weak self] in
-            try? await Task.sleep(for: .seconds(4))
+            // More time for people listening to VoiceOver before the action disappears.
+            try? await Task.sleep(for: .seconds(AccessibilitySupport.isVoiceOverRunning ? 10 : 4))
+            while self?.toast?.id == toast.id, self?.isToastHovered == true {
+                try? await Task.sleep(for: .seconds(0.5))
+            }
             if self?.toast?.id == toast.id { self?.toast = nil }
         }
     }

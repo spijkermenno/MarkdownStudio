@@ -70,14 +70,20 @@ enum ExportService {
     // MARK: - HTML
 
     static func renderedBody(_ source: Source) async -> String {
+        await renderedDocument(source).body
+    }
+
+    /// The body HTML and the document's language.
+    private static func renderedDocument(_ source: Source, forRichText: Bool = false) async -> (body: String, lang: String) {
         let renderer = await OffscreenRenderer.render(source)
         defer { renderer.close() }
-        return await renderer.preview.exportedBodyHTML()
+        let body = await renderer.preview.exportedBodyHTML(forRichText: forRichText)
+        return (body, await renderer.preview.documentLanguage())
     }
 
     /// A self-contained HTML document with the theme's CSS inlined.
     static func standaloneHTML(_ source: Source, forRichText: Bool = false) async -> String {
-        let body = await renderedBody(source)
+        let (body, lang) = await renderedDocument(source, forRichText: forRichText)
         let web = PreviewSchemeHandler.webRoot
         func css(_ path: String) -> String {
             (try? String(contentsOf: web.appending(path: path), encoding: .utf8)) ?? ""
@@ -110,7 +116,7 @@ enum ExportService {
         }
         return """
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="\(escape(lang).replacingOccurrences(of: "\"", with: "&quot;"))">
         <head>
         \(head)
         </head>
@@ -185,6 +191,7 @@ final class OffscreenRenderer {
 
     static func render(_ source: ExportService.Source) async -> OffscreenRenderer {
         let renderer = OffscreenRenderer(documentURL: source.documentURL)
+        renderer.preview.documentTitle = source.title
         renderer.preview.configure(source.configuration)
         await renderer.preview.renderAndWait(source.markdown)
         return renderer

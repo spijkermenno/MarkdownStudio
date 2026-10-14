@@ -102,6 +102,17 @@ final class PresentationController {
     private var slideWindow: SlideWindow?
     private var presenterWindow: NSWindow?
     private var previousOptions: NSApplication.PresentationOptions = []
+    /// Names the slide and presenter windows for VoiceOver and the Window menu.
+    private var documentName = "Untitled"
+
+    /// Options for `MDSlides.load`, including the language and title.
+    fileprivate static func slideOptions(_ configuration: PreviewConfiguration, separator: SlideSeparator, title: String) -> [String: Any] {
+        var options = configuration.javaScriptValue
+        options["separator"] = separator.rawValue
+        options["lang"] = PreviewController.defaultLanguage
+        options["title"] = title
+        return options
+    }
 
     private init(documentDirectory: URL?) {
         slides = SlidesWebView(documentDirectory: documentDirectory)
@@ -112,6 +123,7 @@ final class PresentationController {
         current?.stop()
         let controller = PresentationController(documentDirectory: documentURL?.deletingLastPathComponent())
         current = controller
+        controller.documentName = documentURL?.deletingPathExtension().lastPathComponent ?? window?.title ?? "Untitled"
         controller.present(markdown: markdown, configuration: configuration, separator: separator, from: window)
     }
 
@@ -129,6 +141,7 @@ final class PresentationController {
         slideWindow.contentView = slides.webView
         slideWindow.setFrame(slideScreen.frame, display: true)
         slideWindow.onEscape = { [weak self] in self?.stop() }
+        slideWindow.title = "\(documentName), presentation"
         self.slideWindow = slideWindow
 
         previousOptions = NSApp.presentationOptions
@@ -152,8 +165,7 @@ final class PresentationController {
         }
         slides.onExit = { [weak self] in self?.stop() }
 
-        var options = configuration.javaScriptValue
-        options["separator"] = separator.rawValue
+        let options = Self.slideOptions(configuration, separator: separator, title: documentName)
         Task {
             let count = await slides.load(markdown, options: options)
             state.startedAt = Date()
@@ -175,7 +187,7 @@ final class PresentationController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 520),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.title = "Presenter"
+        window.title = "\(documentName), presenter"
         window.contentView = NSHostingView(rootView: view)
         let frame = screen.visibleFrame
         window.setFrameOrigin(NSPoint(x: frame.midX - 380, y: frame.midY - 260))
@@ -222,9 +234,8 @@ final class PresentationController {
         window.orderFrontRegardless()
         defer { window.contentView = nil; window.close() }
 
-        var options = configuration.javaScriptValue
-        options["separator"] = separator.rawValue
-        let count = await slides.load(markdown, options: options)
+        let title = documentURL?.deletingPathExtension().lastPathComponent ?? url.deletingPathExtension().lastPathComponent
+        let count = await slides.load(markdown, options: slideOptions(configuration, separator: separator, title: title))
 
         let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
         // Slides are 1280×720 CSS pixels; WebKit prints 96 px per inch and PDF uses 72 pt per inch.

@@ -8,9 +8,11 @@
   const counter = document.getElementById('counter');
   const timerLabel = document.getElementById('timer');
   const progressBar = document.getElementById('progress-bar');
+  const announcer = document.getElementById('announcer');
 
   let slides = [];
   let index = 0;
+  let announced = false;
   let startedAt = Date.now();
 
   function post(message) {
@@ -84,8 +86,17 @@
     if (!blocks.length) return Promise.resolve();
     return loadMermaid().then(function (mermaid) {
       return Promise.all(blocks.map(function (pre, i) {
-        return mermaid.render('slide-mermaid-' + i, pre.textContent)
-          .then(function (r) { pre.parentElement.innerHTML = r.svg; })
+        const source = pre.textContent;
+        return mermaid.render('slide-mermaid-' + i, source)
+          .then(function (r) {
+            const container = pre.parentElement;
+            container.innerHTML = r.svg;
+            const svg = container.querySelector('svg');
+            if (svg) {
+              svg.setAttribute('role', 'img');
+              if (!svg.hasAttribute('aria-labelledby')) svg.setAttribute('aria-label', MDStudio.diagramLabel(source));
+            }
+          })
           .catch(function () { /* leave source visible */ });
       }));
     }).catch(function () {});
@@ -115,8 +126,21 @@
     return heading ? heading.textContent.trim() : '';
   }
 
+  // Tells VoiceOver which slide is showing and moves focus to its heading,
+  // so reading continues on the new slide.
+  function announceSlide() {
+    const title = titleOf(slides[index]);
+    announcer.textContent = 'Slide ' + (index + 1) + ' of ' + slides.length + (title ? ': ' + title : '');
+    const heading = slides[index].el.querySelector('h1, h2, h3, h4, h5, h6');
+    if (heading) {
+      heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: true });
+    }
+  }
+
   function show(i) {
     if (!slides.length) return;
+    const previous = index;
     index = Math.max(0, Math.min(i, slides.length - 1));
     slides.forEach(function (s, n) { s.el.classList.toggle('active', n === index); });
     notesText.textContent = slides[index].notes.join('\n\n');
@@ -124,6 +148,7 @@
     progressBar.style.width = ((index + 1) / slides.length * 100) + '%';
     post({ type: 'slide', index: index, count: slides.length, notes: slides[index].notes.join('\n\n'),
            title: titleOf(slides[index]), nextTitle: titleOf(slides[index + 1]) });
+    if (index !== previous || !announced) { announced = true; announceSlide(); }
   }
 
   setInterval(function () {
@@ -174,11 +199,15 @@
     // options: { theme, customCSS, math, mermaid, separator, startAt }
     load: function (markdown, options) {
       options = options || {};
+      announced = false;
       const themeReady = setStylesheet(document.getElementById('theme-css'),
                                        'mdstudio://app/themes/' + (options.theme || 'github') + '.css');
       document.getElementById('custom-css').textContent = options.customCSS || '';
       const renderer = MDStudio.createRenderer({ math: options.math !== false, mermaid: options.mermaid !== false, frontMatter: 'hide' });
-      const parts = split(renderer.render(markdown).html, options.separator || 'auto');
+      const rendered = renderer.render(markdown);
+      document.documentElement.lang = rendered.lang || MDStudio.normalizeLang(options.lang) || 'en';
+      document.title = options.title ? options.title + ', presentation' : 'Presentation';
+      const parts = split(rendered.html, options.separator || 'auto');
       deck.innerHTML = '';
       slides = parts.map(function (part, i) {
         const wrapper = document.createElement('div');

@@ -33,6 +33,28 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         didSet { webView.pageZoom = zoom }
     }
 
+    /// The document's name, used as the web page title so VoiceOver can tell
+    /// previews of different documents apart.
+    var documentTitle = "" {
+        didSet {
+            guard documentTitle != oldValue, isReady else { return }
+            Task { await self.call("return await MDPreview.configure(options)", ["options": ["title": documentTitle]]) }
+        }
+    }
+
+    /// The language the preview is read in when the front matter has no
+    /// `lang:` key: the user's first preferred language.
+    static var defaultLanguage: String {
+        Locale.preferredLanguages.first ?? "en"
+    }
+
+    private var scriptOptions: [String: Any] {
+        var options = configuration.javaScriptValue
+        options["lang"] = Self.defaultLanguage
+        options["title"] = documentTitle
+        return options
+    }
+
     override init() {
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(schemeHandler, forURLScheme: PreviewSchemeHandler.scheme)
@@ -66,7 +88,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         self.configuration = configuration
         configured = true
         guard isReady else { return }
-        Task { await self.call("return await MDPreview.configure(options)", ["options": configuration.javaScriptValue]) }
+        Task { await self.call("return await MDPreview.configure(options)", ["options": scriptOptions]) }
     }
 
     /// Renders `markdown`. Calls are coalesced: while a render is in flight only
@@ -112,9 +134,15 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         return await call("return MDPaste.convert(html)", ["html": html])
     }
 
-    /// The rendered body HTML with preview-only markup removed.
-    func exportedBodyHTML() async -> String {
-        await call("return MDPreview.exportHTML()") ?? ""
+    /// The rendered body HTML with preview-only markup removed. Rich text
+    /// can't collapse a <details>, so it leaves out the diagram source.
+    func exportedBodyHTML(forRichText: Bool = false) async -> String {
+        await call("return MDPreview.exportHTML(options)", ["options": ["richText": forRichText]]) ?? ""
+    }
+
+    /// The language the rendered document is in (front matter or default).
+    func documentLanguage() async -> String {
+        await call("return document.documentElement.lang") ?? "en"
     }
 
     /// Runs `body` as an async JavaScript function; returns string results.
@@ -164,7 +192,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
     private func pageDidLoad() {
         isReady = true
         Task {
-            await self.call("return await MDPreview.configure(options)", ["options": configuration.javaScriptValue])
+            await self.call("return await MDPreview.configure(options)", ["options": scriptOptions])
             await self.flush()
             let waiters = self.readyWaiters
             self.readyWaiters.removeAll()

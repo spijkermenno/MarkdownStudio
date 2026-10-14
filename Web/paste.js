@@ -24,6 +24,13 @@
       filter: (node) => node.nodeName === 'IMG' && /^(file|data|blob|cid):/i.test(node.getAttribute('src') || ''),
       replacement: (c, node) => node.getAttribute('alt') || '',
     });
+    // Markdown Studio's own task items wrap the checkbox in a <label>, which
+    // the GFM plugin (checkbox directly in the <li>) doesn't recognise.
+    s.addRule('labelledTasks', {
+      filter: (node) => node.nodeName === 'INPUT' && node.getAttribute('type') === 'checkbox' &&
+        node.parentNode && node.parentNode.nodeName === 'LABEL' && node.closest('li'),
+      replacement: (c, node) => (node.checked ? '[x]' : '[ ]') + ' ',
+    });
     s.remove(['style', 'script', 'meta', 'title', 'link', 'noscript']);
     return s;
   }

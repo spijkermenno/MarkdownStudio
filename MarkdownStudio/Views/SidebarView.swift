@@ -27,7 +27,12 @@ struct SidebarView: View {
             VStack(spacing: 0) {
                 Picker("Sidebar", selection: $session.sidebarTab) {
                     ForEach(SidebarTab.allCases) { tab in
-                        Image(systemName: tab.systemImage).help(tab.title).tag(tab)
+                        // Icon only on screen; VoiceOver and Voice Control use the title.
+                        Label(tab.title, systemImage: tab.systemImage)
+                            .labelStyle(.iconOnly)
+                            .accessibilityLabel(tab.title)
+                            .help(tab.title)
+                            .tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -102,9 +107,9 @@ struct FilesView: View {
         }
     }
 
-    private func row(_ node: FileNode) -> some View {
-        let isCurrent = session.fileURL?.standardizedFileURL == node.url.standardizedFileURL
-        return Label {
+    @ViewBuilder
+    private func rowLabel(_ node: FileNode, isCurrent: Bool) -> some View {
+        Label {
             Text(node.isDirectory ? node.name : (node.name as NSString).deletingPathExtension)
                 .fontWeight(isCurrent ? .semibold : .regular)
                 .lineLimit(1)
@@ -112,8 +117,23 @@ struct FilesView: View {
             Image(systemName: node.isDirectory ? "folder" : "doc.text")
                 .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onTapGesture { if !node.isDirectory { WorkspaceNavigator.open(node.url) } }
+    }
+
+    private func row(_ node: FileNode) -> some View {
+        let isCurrent = session.fileURL?.standardizedFileURL == node.url.standardizedFileURL
+        return Group {
+            if node.isDirectory {
+                rowLabel(node, isCurrent: false)
+            } else {
+                // A button, so the keyboard, VoiceOver and Voice Control can open it too.
+                Button { WorkspaceNavigator.open(node.url) } label: { rowLabel(node, isCurrent: isCurrent) }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                    .accessibilityHint(isCurrent ? "Open in this window" : "Opens the file")
+            }
+        }
         .help(workspace.relativePath(of: node.url))
         .draggable(node.url)
         .dropDestination(for: URL.self) { urls, _ in
@@ -129,6 +149,19 @@ struct FilesView: View {
             Button("Rename…") {
                 newName = node.isDirectory ? node.name : (node.name as NSString).deletingPathExtension
                 renaming = node
+            }
+            // Moving without dragging, for keyboard, switch and Voice Control users.
+            if let root = workspace.rootURL {
+                let targets = Workspace.moveTargets(for: node.url, root: root, tree: workspace.tree)
+                Menu("Move To") {
+                    ForEach(targets, id: \.self) { folder in
+                        Button(folder.standardizedFileURL == root.standardizedFileURL
+                               ? "\(root.lastPathComponent) (top level)" : workspace.relativePath(of: folder)) {
+                            workspace.move(node.url, to: folder.appendingPathComponent(node.url.lastPathComponent))
+                        }
+                    }
+                }
+                .disabled(targets.isEmpty)
             }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
             Divider()
@@ -147,6 +180,8 @@ struct FilesView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
         }
+        .accessibilityLabel("Folder actions")
+        .help("Folder actions")
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
@@ -189,15 +224,21 @@ struct FolderSearchView: View {
                     ForEach(grouped, id: \.0) { url, matches in
                         Section(workspace.relativePath(of: url)) {
                             ForEach(matches) { result in
-                                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                    Text("\(result.line + 1)")
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                        .frame(minWidth: 22, alignment: .trailing)
-                                    Text(highlighted(result.text)).lineLimit(2)
+                                Button { WorkspaceNavigator.open(result.url, line: result.line) } label: {
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text("\(result.line + 1)")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                            .frame(minWidth: 22, alignment: .trailing)
+                                        Text(highlighted(result.text)).lineLimit(2)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
-                                .contentShape(Rectangle())
-                                .onTapGesture { WorkspaceNavigator.open(result.url, line: result.line) }
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Line \(result.line + 1): \(result.text)")
+                                .accessibilityAddTraits(.isButton)
                             }
                         }
                     }

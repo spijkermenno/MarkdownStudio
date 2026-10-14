@@ -55,6 +55,9 @@ struct StatusBarView: View {
                 }
                 .buttonStyle(.plain)
                 .help(showProblems ? "Hide Problems (⇧⌘M)" : "Show Problems (⇧⌘M)")
+                .accessibilityLabel(Self.problemSummary(warnings: session.problems.filter { $0.severity == .warning }.count,
+                                                        notes: session.problems.filter { $0.severity != .warning }.count))
+                .accessibilityHint(showProblems ? "Hides the problems list" : "Shows the problems list")
             }
             if session.zoom != 1 {
                 Button("\(Int((session.zoom * 100).rounded()))%", action: session.resetZoom)
@@ -151,5 +154,12 @@ private struct GoalPopover: View {
         guard words > 0 else { return }
         session.setGoal(words)
         dismiss()
+    }
+}
+
+extension StatusBarView {
+    /// "3 warnings, 1 note" for VoiceOver, instead of the bare numbers on screen.
+    nonisolated static func problemSummary(warnings: Int, notes: Int) -> String {
+        "\(warnings) \(warnings == 1 ? "warning" : "warnings"), \(notes) \(notes == 1 ? "note" : "notes")"
     }
 }

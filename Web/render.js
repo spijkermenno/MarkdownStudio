@@ -72,6 +72,32 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Accessibility helpers
+
+  // A BCP 47-like language tag ("nl", "en-GB", "zh-Hant-TW"), or null.
+  function normalizeLang(value) {
+    const tag = String(value || '').trim().replace(/^["']|["']$/g, '').replace(/_/g, '-');
+    return /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(tag) ? tag : null;
+  }
+
+  // The document language from a `lang:` (or `language:`) front matter key.
+  function frontMatterLang(fm) {
+    if (!fm) return null;
+    const entry = fm.entries.find(function (e) { return /^(lang|language)$/i.test(e[0]); });
+    return entry ? normalizeLang(entry[1]) : null;
+  }
+
+  // Accessible name for a Mermaid diagram: its accTitle and accDescr when the
+  // author wrote them, otherwise "Diagram".
+  function diagramLabel(source) {
+    const src = String(source || '');
+    const title = /^\s*accTitle\s*:\s*(.+)$/m.exec(src);
+    const descr = /^\s*accDescr\s*:\s*(.+)$/m.exec(src) || /^\s*accDescr\s*\{([\s\S]*?)\}/m.exec(src);
+    const parts = [title && title[1].trim(), descr && descr[1].replace(/\s+/g, ' ').trim()].filter(Boolean);
+    return parts.length ? parts.join('. ') : 'Diagram';
+  }
+
+  // ---------------------------------------------------------------------------
   // Plugins
 
   // Adds data-line / data-line-end attributes to block tokens so the preview
@@ -145,10 +171,15 @@
         const checked = match[1] !== ' ';
         const item = tokens[i - 2];
         const line = (item.map ? item.map[0] : 0) + offset;
+        // The label gives the checkbox the task text as its accessible name,
+        // and lets a click on the text toggle the box.
         const checkbox = new state.Token('html_inline', '', 0);
-        checkbox.content = '<input type="checkbox" class="task-list-item-checkbox" data-task-line="' +
+        checkbox.content = '<label class="task-list-item-label"><input type="checkbox" class="task-list-item-checkbox" data-task-line="' +
           line + '"' + (checked ? ' checked' : '') + '> ';
+        const close = new state.Token('html_inline', '', 0);
+        close.content = '</label>';
         inline.children.unshift(checkbox);
+        inline.children.push(close);
 
         item.attrJoin('class', 'task-list-item');
         for (let j = i - 3; j >= 0; j--) {
@@ -325,7 +356,8 @@
         const fm = parseFrontMatter(src);
         const env = { lineOffset: fm ? fm.lineCount : 0 };
         const html = renderFrontMatter(fm) + md.render(fm ? fm.body : src, env);
-        return { html: html, hasMath: opts.math && /class="math /.test(html), hasMermaid: /class="mermaid"/.test(html) };
+        return { html: html, hasMath: opts.math && /class="math /.test(html), hasMermaid: /class="mermaid"/.test(html),
+                 lang: frontMatterLang(fm) };
       },
     };
   }
@@ -335,5 +367,7 @@
     parseFrontMatter: parseFrontMatter,
     slugify: slugify,
     escapeHtml: escapeHtml,
+    normalizeLang: normalizeLang,
+    diagramLabel: diagramLabel,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

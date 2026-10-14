@@ -41,10 +41,19 @@ private struct ProblemRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: problem.severity == .warning ? "exclamationmark.triangle.fill" : "info.circle.fill")
-                .foregroundStyle(problem.severity == .warning ? Color.orange : Color.blue)
-            Text(problem.message).lineLimit(1).truncationMode(.tail)
-            Spacer()
+            // A button (not just a click target) so the keyboard and VoiceOver can reach it.
+            Button(action: select) {
+                HStack(spacing: 8) {
+                    Image(systemName: problem.severity == .warning ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                        .foregroundStyle(problem.severity == .warning ? Color.orange : Color.blue)
+                    Text(problem.message).lineLimit(1).truncationMode(.tail)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(problem.severity == .warning ? "Warning" : "Note"): \(problem.message), line \(problem.line + 1)")
+            .accessibilityHint("Selects the text in the editor")
             if let fix = problem.fix {
                 Button(fix.title, action: self.fix)
                     .controlSize(.small)
@@ -52,6 +61,8 @@ private struct ProblemRow: View {
             Text("Line \(problem.line + 1)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+                .onTapGesture(perform: select)
+                .accessibilityHidden(true)
         }
         .font(.callout)
         .padding(.horizontal, 12)
@@ -59,13 +70,13 @@ private struct ProblemRow: View {
         .background(hovering ? Color.primary.opacity(0.05) : .clear)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(perform: select)
         .help(problem.message)
     }
 }
 
 struct ToastView: View {
     let toast: DocumentSession.Toast
+    var hovering: (Bool) -> Void = { _ in }
     let dismiss: () -> Void
 
     var body: some View {
@@ -86,5 +97,7 @@ struct ToastView: View {
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.separator))
         .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .onHover(perform: hovering)
+        .accessibilityElement(children: .combine)
     }
 }

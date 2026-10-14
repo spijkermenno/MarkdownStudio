@@ -47,8 +47,10 @@ struct FormattingBar: View {
                     Button {
                         session.perform(item.command)
                     } label: {
+                        // At least 24 × 24 points (WCAG 2.5.8), clickable across the whole frame.
                         Image(systemName: item.symbol)
-                            .frame(width: 26, height: 22)
+                            .frame(width: 28, height: 26)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
                     .help(item.shortcut.isEmpty ? item.title : "\(item.title) (\(item.shortcut))")
@@ -58,7 +60,7 @@ struct FormattingBar: View {
             Spacer()
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .background(.bar)
     }
 }
