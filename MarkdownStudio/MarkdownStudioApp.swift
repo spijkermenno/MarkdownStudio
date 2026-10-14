@@ -9,6 +9,14 @@ struct MarkdownStudioApp: App {
         DocumentGroup(newDocument: { MarkdownDocument() }) { file in
             DocumentView(document: file.document, fileURL: file.fileURL)
         }
+        // Without this, documents open at their minimum size. Most of the screen,
+        // capped so large displays don't get wall-to-wall windows. Only the size is
+        // set, so macOS still cascades each new window.
+        .defaultWindowPlacement { _, context in
+            let screen = context.defaultDisplay.visibleRect.size
+            return WindowPlacement(size: CGSize(width: min(screen.width * 0.85, 1600),
+                                                height: min(screen.height * 0.88, 1100)))
+        }
         .commands {
             AppCommands()
             SidebarCommands()
