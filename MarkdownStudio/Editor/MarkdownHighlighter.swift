@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 
 /// Regex-based Markdown syntax highlighting for the editor's text storage.
 ///
@@ -12,37 +16,62 @@ final class MarkdownHighlighter {
     private var codeRanges: [NSRange] = []
 
     private struct Fonts {
-        let base: NSFont
-        let bold: NSFont
-        let italic: NSFont
-        let boldItalic: NSFont
-        let headings: [NSFont]
+        let base: PlatformFont
+        let bold: PlatformFont
+        let italic: PlatformFont
+        let boldItalic: PlatformFont
+        let headings: [PlatformFont]
 
-        init(base: NSFont) {
-            let manager = NSFontManager.shared
+        init(base: PlatformFont) {
             self.base = base
-            bold = manager.convert(base, toHaveTrait: .boldFontMask)
-            italic = manager.convert(base, toHaveTrait: .italicFontMask)
-            boldItalic = manager.convert(bold, toHaveTrait: .italicFontMask)
+            bold = Self.font(base, adding: .bold)
+            italic = Self.font(base, adding: .italic)
+            boldItalic = Self.font(bold, adding: .italic)
             let scales: [CGFloat] = [1.4, 1.25, 1.12, 1.05, 1, 1]
             let boldBase = bold
-            headings = scales.map { manager.convert(boldBase, toSize: (base.pointSize * $0).rounded()) }
+            headings = scales.map { Self.font(boldBase, size: (base.pointSize * $0).rounded()) }
+        }
+
+        enum Trait { case bold, italic }
+
+        /// `font` with a trait added, keeping the traits it already has.
+        static func font(_ font: PlatformFont, adding trait: Trait) -> PlatformFont {
+            #if os(macOS)
+            NSFontManager.shared.convert(font, toHaveTrait: trait == .bold ? .boldFontMask : .italicFontMask)
+            #else
+            let traits = font.fontDescriptor.symbolicTraits.union(trait == .bold ? .traitBold : .traitItalic)
+            return font.fontDescriptor.withSymbolicTraits(traits).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
+            #endif
+        }
+
+        static func font(_ font: PlatformFont, size: CGFloat) -> PlatformFont {
+            #if os(macOS)
+            NSFontManager.shared.convert(font, toSize: size)
+            #else
+            font.withSize(size)
+            #endif
         }
     }
 
     /// Every color that draws text reaches at least 4.5:1 on the editor (and code)
     /// background in light and dark mode, and more with Increase Contrast.
     enum Colors {
+        #if os(macOS)
         static let text = NSColor.textColor
+        static let link = NSColor.linkColor
+        static let codeBackground = NSColor.quaternaryLabelColor.withAlphaComponent(0.08)
+        #else
+        static let text = UIColor.label
+        static let link = UIColor.link
+        static let codeBackground = UIColor.quaternaryLabel.withAlphaComponent(0.08)
+        #endif
         static let syntax = adaptive("syntax", Swatch.syntax)
         static let secondary = adaptive("secondary", Swatch.secondary)
-        static let link = NSColor.linkColor
         static let code = adaptive("code", Swatch.code)
-        static let codeBackground = NSColor.quaternaryLabelColor.withAlphaComponent(0.08)
         static let listMarker = adaptive("listMarker", Swatch.listMarker)
         static let html = adaptive("html", Swatch.html)
         static let math = adaptive("math", Swatch.math)
-        static let highlight = NSColor.systemYellow.withAlphaComponent(0.3)
+        static let highlight = PlatformColor.systemYellow.withAlphaComponent(0.3)
         /// Line numbers in the gutter.
         static let lineNumber = syntax
 
@@ -69,6 +98,7 @@ final class MarkdownHighlighter {
             }
         }
 
+        #if os(macOS)
         /// Resolved at draw time, so it follows Light/Dark and Increase Contrast
         /// (which macOS reports as a setting, not as the appearance's name).
         private static func adaptive(_ name: String, _ swatch: Swatch) -> NSColor {
@@ -85,6 +115,19 @@ final class MarkdownHighlighter {
             NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
                     blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
         }
+        #else
+        /// Resolved at draw time, so it follows Light/Dark and Increase Contrast.
+        private static func adaptive(_ name: String, _ swatch: Swatch) -> UIColor {
+            UIColor { traits in
+                rgb(swatch.value(dark: traits.userInterfaceStyle == .dark, highContrast: traits.accessibilityContrast == .high))
+            }
+        }
+
+        private static func rgb(_ hex: Int) -> UIColor {
+            UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        }
+        #endif
     }
 
     func configure(_ configuration: EditorConfiguration) {
@@ -138,19 +181,19 @@ final class MarkdownHighlighter {
                 if let match { body(match) }
             }
         }
-        func color(_ range: NSRange, _ color: NSColor) {
+        func color(_ range: NSRange, _ color: PlatformColor) {
             guard range.location != NSNotFound, range.length > 0 else { return }
             storage.addAttribute(.foregroundColor, value: color, range: range)
         }
-        func font(_ range: NSRange, _ font: NSFont) {
+        func font(_ range: NSRange, _ font: PlatformFont) {
             guard range.location != NSNotFound, range.length > 0 else { return }
             storage.addAttribute(.font, value: font, range: range)
         }
         /// Adds a font trait while keeping existing traits (bold inside italic, …).
-        func addTrait(_ range: NSRange, _ trait: NSFontTraitMask) {
+        func addTrait(_ range: NSRange, _ trait: Fonts.Trait) {
             storage.enumerateAttribute(.font, in: range) { value, sub, _ in
-                let current = value as? NSFont ?? fonts.base
-                storage.addAttribute(.font, value: NSFontManager.shared.convert(current, toHaveTrait: trait), range: sub)
+                let current = value as? PlatformFont ?? fonts.base
+                storage.addAttribute(.font, value: Fonts.font(current, adding: trait), range: sub)
             }
         }
 
@@ -181,15 +224,15 @@ final class MarkdownHighlighter {
         // Inline
         each(Rules.html) { m in color(m.range, Colors.html) }
         each(Rules.boldItalic) { m in
-            addTrait(m.range, .boldFontMask); addTrait(m.range, .italicFontMask)
+            addTrait(m.range, .bold); addTrait(m.range, .italic)
             color(m.range(at: 1), Colors.syntax); color(m.range(at: 3), Colors.syntax)
         }
         each(Rules.bold) { m in
-            addTrait(m.range, .boldFontMask)
+            addTrait(m.range, .bold)
             color(m.range(at: 1), Colors.syntax); color(m.range(at: 3), Colors.syntax)
         }
         each(Rules.italic) { m in
-            addTrait(m.range, .italicFontMask)
+            addTrait(m.range, .italic)
             color(m.range(at: 1), Colors.syntax); color(m.range(at: 3), Colors.syntax)
         }
         each(Rules.strikethrough) { m in

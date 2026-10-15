@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import UniformTypeIdentifiers
 
@@ -212,13 +213,6 @@ final class MarkdownTextView: NSTextView {
         super.paste(sender)
     }
 
-    /// HTML with real document structure. Code editors such as VS Code put
-    /// only styled <div>/<span> on the clipboard; that stays plain text.
-    nonisolated static func isRichHTML(_ html: String) -> Bool {
-        html.range(of: "<(h[1-6]|p|ul|ol|li|a|strong|b|em|i|table|blockquote|pre|code|img|del|s|mark)[\\s>]",
-                   options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
     private func pasteImage(_ data: Data) {
         guard let documentURL else {
             let alert = NSAlert()
@@ -320,19 +314,4 @@ final class MarkdownTextView: NSTextView {
         return super.resignFirstResponder()
     }
 }
-
-enum MarkdownPaths {
-    /// A Markdown-ready (percent-encoded) path to `url`, relative to `directory` when possible.
-    nonisolated static func relativePath(to url: URL, from directory: URL?) -> String {
-        guard let directory else { return url.absoluteString }
-        let target = url.standardizedFileURL.pathComponents
-        let base = directory.standardizedFileURL.pathComponents
-        var common = 0
-        while common < min(target.count, base.count), target[common] == base[common] { common += 1 }
-        // Only the root in common: an absolute path is clearer.
-        guard common > 1 else { return url.absoluteString }
-        let ups = Array(repeating: "..", count: base.count - common)
-        let path = (ups + target[common...]).joined(separator: "/")
-        return path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-    }
-}
+#endif

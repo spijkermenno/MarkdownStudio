@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 /// First-run onboarding: a short setup window followed by a guided tour.

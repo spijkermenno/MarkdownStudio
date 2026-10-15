@@ -1,4 +1,3 @@
-import AppKit
 import WebKit
 import os
 
@@ -63,13 +62,20 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         config.preferences.shouldPrintBackgrounds = true
         let contentController = WKUserContentController()
         config.userContentController = contentController
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 800), configuration: config)
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 800), configuration: config)
         super.init()
 
         contentController.add(WeakScriptMessageHandler(self), name: "bridge")
         webView.navigationDelegate = self
+        #if os(macOS)
         webView.allowsMagnification = false
         webView.setValue(false, forKey: "drawsBackground")
+        #else
+        // The page draws its own background, so the editor's shows through while loading.
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        #endif
         #if DEBUG
         webView.isInspectable = true
         #endif
@@ -175,8 +181,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         case "toggleTask":
             if let line = body["line"] as? Int { onToggleTask?(line) }
         case "copy":
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(body["text"] as? String ?? "", forType: .string)
+            Platform.copy(body["text"] as? String ?? "")
         case "log":
             let text = body["message"] as? String ?? ""
             if body["level"] as? String == "error" {
@@ -212,10 +217,10 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
             if isMarkdown, let onOpenDocument {
                 onOpenDocument(fileURL, PreviewSchemeHandler.fragment(in: url))
             } else {
-                NSWorkspace.shared.open(fileURL)
+                Platform.open(fileURL)
             }
         } else if let scheme = url.scheme?.lowercased(), ["http", "https", "mailto", "ftp", "tel"].contains(scheme) {
-            NSWorkspace.shared.open(url)
+            Platform.open(url)
         }
         return .cancel
     }

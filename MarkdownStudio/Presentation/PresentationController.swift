@@ -1,88 +1,9 @@
+#if os(macOS)
 import AppKit
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
-
-enum SlideSeparator: String, CaseIterable, Identifiable {
-    case automatic = "auto", rule, heading
-    var id: Self { self }
-    var title: String {
-        switch self {
-        case .automatic: "Automatic"
-        case .rule: "Horizontal rules (---)"
-        case .heading: "Headings (# and ##)"
-        }
-    }
-}
-
-/// State shown in the presenter window.
-@Observable
-final class PresentationState {
-    var index = 0
-    var count = 0
-    var notes = ""
-    var title = ""
-    var nextTitle = ""
-    var startedAt = Date()
-}
-
-/// Loads `Web/slides.html` in a web view and talks to `MDSlides`.
-final class SlidesWebView: NSObject, WKScriptMessageHandler {
-    let webView: WKWebView
-    private let schemeHandler = PreviewSchemeHandler()
-    private var readyWaiters: [CheckedContinuation<Void, Never>] = []
-    private var isReady = false
-    var onSlide: (([String: Any]) -> Void)?
-    var onExit: (() -> Void)?
-
-    init(documentDirectory: URL?) {
-        let config = WKWebViewConfiguration()
-        config.setURLSchemeHandler(schemeHandler, forURLScheme: PreviewSchemeHandler.scheme)
-        config.preferences.shouldPrintBackgrounds = true
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 720), configuration: config)
-        super.init()
-        schemeHandler.documentDirectory = documentDirectory
-        config.userContentController.add(WeakSlidesHandler(self), name: "slides")
-        webView.load(URLRequest(url: URL(string: "mdstudio://app/slides.html")!))
-    }
-
-    func load(_ markdown: String, options: [String: Any]) async -> Int {
-        if !isReady { await withCheckedContinuation { readyWaiters.append($0) } }
-        return await withCheckedContinuation { continuation in
-            webView.callAsyncJavaScript("return await MDSlides.load(markdown, options)",
-                                        arguments: ["markdown": markdown, "options": options],
-                                        in: nil, in: .page) { result in
-                continuation.resume(returning: (try? result.get()) as? Int ?? 0)
-            }
-        }
-    }
-
-    func run(_ script: String) {
-        webView.evaluateJavaScript(script, completionHandler: nil)
-    }
-
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
-        switch type {
-        case "ready":
-            isReady = true
-            readyWaiters.forEach { $0.resume() }
-            readyWaiters.removeAll()
-        case "slide": onSlide?(body)
-        case "exit": onExit?()
-        default: break
-        }
-    }
-}
-
-private final class WeakSlidesHandler: NSObject, WKScriptMessageHandler {
-    weak var target: SlidesWebView?
-    init(_ target: SlidesWebView) { self.target = target }
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        target?.userContentController(controller, didReceive: message)
-    }
-}
 
 /// A borderless window that can take keyboard focus.
 private final class SlideWindow: NSWindow {
@@ -104,15 +25,6 @@ final class PresentationController {
     private var previousOptions: NSApplication.PresentationOptions = []
     /// Names the slide and presenter windows for VoiceOver and the Window menu.
     private var documentName = "Untitled"
-
-    /// Options for `MDSlides.load`, including the language and title.
-    fileprivate static func slideOptions(_ configuration: PreviewConfiguration, separator: SlideSeparator, title: String) -> [String: Any] {
-        var options = configuration.javaScriptValue
-        options["separator"] = separator.rawValue
-        options["lang"] = PreviewController.defaultLanguage
-        options["title"] = title
-        return options
-    }
 
     private init(documentDirectory: URL?) {
         slides = SlidesWebView(documentDirectory: documentDirectory)
@@ -165,7 +77,7 @@ final class PresentationController {
         }
         slides.onExit = { [weak self] in self?.stop() }
 
-        let options = Self.slideOptions(configuration, separator: separator, title: documentName)
+        let options = SlidesWebView.options(configuration, separator: separator, title: documentName)
         Task {
             let count = await slides.load(markdown, options: options)
             state.startedAt = Date()
@@ -235,7 +147,7 @@ final class PresentationController {
         defer { window.contentView = nil; window.close() }
 
         let title = documentURL?.deletingPathExtension().lastPathComponent ?? url.deletingPathExtension().lastPathComponent
-        let count = await slides.load(markdown, options: slideOptions(configuration, separator: separator, title: title))
+        let count = await slides.load(markdown, options: SlidesWebView.options(configuration, separator: separator, title: title))
 
         let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
         // Slides are 1280×720 CSS pixels; WebKit prints 96 px per inch and PDF uses 72 pt per inch.
@@ -302,3 +214,4 @@ private struct PresenterView: View {
         .frame(minWidth: 560, minHeight: 380)
     }
 }
+#endif

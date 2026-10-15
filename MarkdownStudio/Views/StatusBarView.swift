@@ -22,18 +22,23 @@ struct StatusBarView: View {
                 }
             }
             .buttonStyle(.plain)
+            .fixedSize()
             .help(session.goal == nil ? "Set a writing goal" : "Change the writing goal")
             .popover(isPresented: $isEditingGoal, arrowEdge: .top) {
                 GoalPopover(session: session)
-            }
-            if session.wordsToday != 0 {
-                Text("\(session.wordsToday > 0 ? "+" : "")\(session.wordsToday.formatted()) today")
+                    // A popover on iPhone too, not a full-height sheet.
+                    .presentationCompactAdaptation(.popover)
             }
             // Less important details give way first when the window is narrow.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 14) {
+                    wordsToday
                     Text("\(stats.characters.formatted()) characters")
                     Text(stats.readingMinutes == 0 ? "No reading time" : "\(stats.readingMinutes) min read")
+                }
+                HStack(spacing: 14) {
+                    wordsToday
+                    Text(stats.readingMinutes == 0 ? "" : "\(stats.readingMinutes) min read")
                 }
                 Text(stats.readingMinutes == 0 ? "" : "\(stats.readingMinutes) min read")
                 Color.clear.frame(width: 0, height: 0)
@@ -54,6 +59,7 @@ struct StatusBarView: View {
                     .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)
+                .fixedSize()
                 .help(showProblems ? "Hide Problems (⇧⌘M)" : "Show Problems (⇧⌘M)")
                 .accessibilityLabel(Self.problemSummary(warnings: session.problems.filter { $0.severity == .warning }.count,
                                                         notes: session.problems.filter { $0.severity != .warning }.count))
@@ -65,7 +71,11 @@ struct StatusBarView: View {
                     .help("Reset zoom (⌘0)")
             }
             if session.selectionLength > 0 {
-                Text("\(session.selectionLength.formatted()) selected")
+                ViewThatFits(in: .horizontal) {
+                    Text("\(session.selectionLength.formatted()) selected")
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .lineLimit(1)
             }
             Button("Ln \(session.cursorLine + 1), Col \(session.cursorColumn + 1)") {
                 session.isShowingGoToLine = true
@@ -128,7 +138,7 @@ private struct GoalPopover: View {
             }
             Text(session.goalIsInFrontMatter
                  ? "Saved in this document's front matter (goal:)."
-                 : "Saved for this file on this Mac. Add goal: to the front matter to keep it in the file.")
+                 : "Saved for this file on this \(Self.deviceName). Add goal: to the front matter to keep it in the file.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -150,10 +160,25 @@ private struct GoalPopover: View {
         .onAppear { words = session.goal ?? 1000 }
     }
 
+    #if os(macOS)
+    private static let deviceName = "Mac"
+    #else
+    private static let deviceName = "device"
+    #endif
+
     private func save() {
         guard words > 0 else { return }
         session.setGoal(words)
         dismiss()
+    }
+}
+
+private extension StatusBarView {
+    @ViewBuilder
+    var wordsToday: some View {
+        if session.wordsToday != 0 {
+            Text("\(session.wordsToday > 0 ? "+" : "")\(session.wordsToday.formatted()) today")
+        }
     }
 }
 

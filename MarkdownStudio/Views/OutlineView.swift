@@ -3,6 +3,8 @@ import SwiftUI
 /// Sidebar table of contents built from the document's headings.
 struct OutlineView: View {
     let session: DocumentSession
+    /// Called after jumping to a heading (closes the outline sheet on iPhone).
+    var onJump: (() -> Void)?
 
     private var currentLine: Int? {
         session.outline.last(where: { $0.line <= session.cursorLine })?.line
@@ -18,6 +20,7 @@ struct OutlineView: View {
                 ForEach(session.outline) { item in
                     Button {
                         session.jump(toLine: item.line)
+                        onJump?()
                     } label: {
                         Text(item.title)
                             .font(item.level == 1 ? .body.weight(.semibold) : .body)

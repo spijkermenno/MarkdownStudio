@@ -62,6 +62,8 @@ body {
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; cursor: pointer;
 }
 pre:hover .copy-button, .copy-button:focus { opacity: 1; }
+/* Touch screens have no hover, so the button stays visible. */
+@media (hover: none) { .copy-button { opacity: 1; } }
 .copy-button.copied { color: #1a7f37; opacity: 1; }
 
 /* highlight.js: the GitHub themes' orange (light) and blue (dark) tokens are

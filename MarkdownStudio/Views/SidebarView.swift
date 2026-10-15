@@ -19,6 +19,7 @@ enum SidebarTab: String, CaseIterable, Identifiable {
     }
 }
 
+#if os(macOS)
 struct SidebarView: View {
     @Bindable var session: DocumentSession
 
@@ -307,3 +308,4 @@ struct FolderSearchView: View {
         return attributed
     }
 }
+#endif

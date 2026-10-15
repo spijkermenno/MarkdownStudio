@@ -1,6 +1,11 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
+#if os(macOS)
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -10,6 +15,51 @@ struct SettingsView: View {
             Tab("About", systemImage: "info.circle") { AboutSettings() }
         }
         .frame(width: 520)
+    }
+}
+#else
+/// Settings as a sheet: a list of the same four pages as the Mac's Settings window.
+struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                NavigationLink { GeneralSettings().navigationTitle("General") } label: {
+                    Label("General", systemImage: "gearshape")
+                }
+                NavigationLink { EditorSettings().navigationTitle("Editor") } label: {
+                    Label("Editor", systemImage: "square.and.pencil")
+                }
+                NavigationLink { PreviewSettings().navigationTitle("Preview") } label: {
+                    Label("Preview", systemImage: "eye")
+                }
+                NavigationLink { AboutSettings().navigationTitle("About") } label: {
+                    Label("About", systemImage: "info.circle")
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+#endif
+
+private extension View {
+    /// Grouped forms. The Mac's Settings window sizes itself to the form;
+    /// on iOS the form scrolls inside the sheet.
+    func settingsForm() -> some View {
+        #if os(macOS)
+        formStyle(.grouped)
+            .fixedSize(horizontal: false, vertical: true)
+        #else
+        formStyle(.grouped)
+        #endif
     }
 }
 
@@ -42,17 +92,20 @@ private struct GeneralSettings: View {
             Picker("Slides start at", selection: $slideSeparator) {
                 ForEach(SlideSeparator.allCases) { Text($0.title).tag($0) }
             }
+            #if os(macOS)
             Section("Markdown Files") {
                 DefaultAppRow()
             }
             Section("Onboarding") {
                 OnboardingRow()
             }
+            #endif
         }
-        .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsForm()
     }
 }
+
+#if os(macOS)
 
 /// Restarts the first-run setup and tour.
 private struct OnboardingRow: View {
@@ -103,6 +156,7 @@ private struct DefaultAppRow: View {
         .onAppear { isDefault = DefaultAppHandler.isDefault }
     }
 }
+#endif
 
 private struct EditorSettings: View {
     @AppStorage(SettingsKey.editorFontName) private var fontName = ""
@@ -117,18 +171,30 @@ private struct EditorSettings: View {
     @AppStorage(SettingsKey.spellCheck) private var spellCheck = true
     @AppStorage(SettingsKey.autocomplete) private var autocomplete = true
     @AppStorage(SettingsKey.pasteAsMarkdown) private var pasteAsMarkdown = true
+    @AppStorage(SettingsKey.showFormattingBar) private var showFormattingBar = false
+
+    #if os(macOS)
+    private static let allFamilies = NSFontManager.shared.availableFontFamilies
 
     private static let monospacedFamilies: [String] = {
         let manager = NSFontManager.shared
-        return manager.availableFontFamilies.filter { family in
+        return allFamilies.filter { family in
             guard let font = NSFont(name: family, size: 12) else { return false }
             return font.isFixedPitch || manager.traits(of: font).contains(.fixedPitchFontMask)
         }
     }()
+    #else
+    private static let allFamilies = UIFont.familyNames.sorted()
+
+    private static let monospacedFamilies: [String] = allFamilies.filter { family in
+        guard let name = UIFont.fontNames(forFamilyName: family).first, let font = UIFont(name: name, size: 12) else { return false }
+        return font.fontDescriptor.symbolicTraits.contains(.traitMonoSpace)
+    }
+    #endif
 
     private static let otherFamilies: [String] = {
         let monospaced = Set(monospacedFamilies)
-        return NSFontManager.shared.availableFontFamilies.filter { !monospaced.contains($0) && !$0.hasPrefix(".") }
+        return allFamilies.filter { !monospaced.contains($0) && !$0.hasPrefix(".") }
     }()
 
     var body: some View {
@@ -151,6 +217,9 @@ private struct EditorSettings: View {
                 Toggle("Highlight current line", isOn: $highlightCurrentLine)
                 Toggle("Typewriter scrolling", isOn: $typewriterScrolling)
                 Toggle("Focus mode (dim other paragraphs)", isOn: $focusMode)
+                #if os(iOS)
+                Toggle("Formatting bar above the keyboard", isOn: $showFormattingBar)
+                #endif
             }
             Section("Typing") {
                 Toggle("Continue lists and quotes on Return", isOn: $smartLists)
@@ -160,8 +229,7 @@ private struct EditorSettings: View {
                 Toggle("Convert rich text to Markdown when pasting", isOn: $pasteAsMarkdown)
             }
         }
-        .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsForm()
     }
 }
 
@@ -198,8 +266,7 @@ private struct PreviewSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsForm()
     }
 }
 
@@ -215,9 +282,17 @@ private struct AboutSettings: View {
         Form {
             Section {
                 VStack(spacing: 6) {
+                    #if os(macOS)
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
                         .frame(width: 64, height: 64)
+                    #else
+                    Image(.appIcon)
+                        .resizable()
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .accessibilityHidden(true)
+                    #endif
                     Text("Markdown Studio").font(.title2.bold())
                     Text(version).foregroundStyle(.secondary)
                 }
@@ -244,7 +319,6 @@ private struct AboutSettings: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .settingsForm()
     }
 }

@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import UniformTypeIdentifiers
 import WebKit
 
@@ -11,9 +13,12 @@ enum ExportService {
         var title: String
         var documentURL: URL?
         var configuration: PreviewConfiguration
+        #if os(macOS)
         var window: NSWindow?
+        #endif
     }
 
+    #if os(macOS)
     // MARK: - Actions
 
     static func exportHTML(_ source: Source) async {
@@ -66,6 +71,7 @@ enum ExportService {
         pasteboard.setString(html, forType: .html)
         pasteboard.setString(attributed.string, forType: .string)
     }
+    #endif
 
     // MARK: - HTML
 
@@ -133,6 +139,7 @@ enum ExportService {
         string.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
     }
 
+    #if os(macOS)
     // MARK: - Helpers
 
     private static func printInfo() -> NSPrintInfo {
@@ -169,8 +176,10 @@ enum ExportService {
         let alert = NSAlert(error: error)
         if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
     }
+    #endif
 }
 
+#if os(macOS)
 /// A preview web view in an invisible window, used for export and printing.
 final class OffscreenRenderer {
     let preview = PreviewController()
@@ -239,3 +248,4 @@ private final class PrintDelegate: NSObject, @unchecked Sendable {
         }
     }
 }
+#endif

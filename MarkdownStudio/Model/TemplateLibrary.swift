@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import Foundation
 
 /// Built-in and user templates for new documents. Placeholders such as
@@ -35,11 +37,20 @@ nonisolated struct DocumentTemplate: Identifiable, Hashable, Sendable {
 }
 
 nonisolated enum TemplateLibrary {
+    #if os(macOS)
     /// ~/Library/Application Support/Markdown Studio/Templates
     static var userTemplatesFolder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Markdown Studio/Templates", isDirectory: true)
     }
+    #else
+    /// Templates in the app's own folder, which the Files app shows as
+    /// On My iPhone/iPad → Markdown Studio → Templates.
+    static var userTemplatesFolder: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Templates", isDirectory: true)
+    }
+    #endif
 
     static var all: [DocumentTemplate] { builtIn + user }
 
@@ -55,6 +66,7 @@ nonisolated enum TemplateLibrary {
             }
     }
 
+    #if os(macOS)
     /// Creates the folder (with a short read-me) and shows it in Finder.
     @MainActor
     static func revealUserTemplatesFolder() {
@@ -74,6 +86,7 @@ nonisolated enum TemplateLibrary {
         }
         NSWorkspace.shared.activateFileViewerSelecting([readme])
     }
+    #endif
 
     static let builtIn: [DocumentTemplate] = [
         DocumentTemplate(name: "README", text: """

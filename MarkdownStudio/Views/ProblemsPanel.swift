@@ -88,7 +88,12 @@ struct ToastView: View {
                     action()
                     dismiss()
                 }
+                #if os(macOS)
                 .buttonStyle(.link)
+                #else
+                .buttonStyle(.borderless)
+                .fontWeight(.semibold)
+                #endif
             }
         }
         .font(.callout)

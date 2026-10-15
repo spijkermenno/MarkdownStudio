@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -23,8 +25,13 @@ final class DocumentSession {
     var createdInWorkspace = false
     /// The folder tree appears only for documents inside the open folder.
     var isInWorkspace: Bool {
+        #if os(macOS)
         let workspace = Workspace.shared
         return workspace.rootURL != nil && ((fileURL == nil && createdInWorkspace) || workspace.contains(fileURL))
+        #else
+        // Folders are browsed in the system document browser on iPhone and iPad.
+        false
+        #endif
     }
     /// Incremented to ask the window to show the sidebar / focus folder search.
     var sidebarRequest = 0
@@ -51,14 +58,30 @@ final class DocumentSession {
     private(set) var cursorLine = 0
     private(set) var cursorColumn = 0
     private(set) var selectionLength = 0
+    /// Drives the template suggestions shown in an empty document.
+    private(set) var isEmpty = true
+
+    #if os(iOS)
+    /// The keyboard is up for the editor.
+    private(set) var isEditing = false
+    /// An exported file for the share sheet.
+    var sharedFile: SharedFile?
+    var isExporting = false
+    var isPresentingSlides = false
+    #endif
 
     var fileURL: URL? {
         didSet { updateFileURL() }
     }
+    /// The document's folder when the app may read it, for images, link checks
+    /// and file suggestions. On iOS that is often only the document itself.
+    @ObservationIgnored private var documentDirectory: URL?
 
+    #if os(macOS)
     @ObservationIgnored weak var window: NSWindow? {
         didSet { if window !== oldValue { updateTabBar() } }
     }
+    #endif
     /// Writes edits back into the SwiftUI document.
     @ObservationIgnored var onTextChange: ((String) -> Void)?
     @ObservationIgnored var previewConfiguration = PreviewConfiguration()
@@ -78,17 +101,30 @@ final class DocumentSession {
         self.fileURL = fileURL
         self.viewMode = viewMode
         self.splitOrientation = splitOrientation
+        documentDirectory = Self.readableDirectory(of: fileURL)
+    }
+
+    private static func readableDirectory(of fileURL: URL?) -> URL? {
+        guard let directory = fileURL?.deletingLastPathComponent() else { return nil }
+        #if os(iOS)
+        return (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) != nil ? directory : nil
+        #else
+        return directory
+        #endif
     }
 
     /// Called once the window appears; computes the outline and statistics.
     func start() {
+        isEmpty = editor.text.isEmpty
+        scheduleAnalysis(editor.text, delay: 0)
+        #if os(macOS)
         if fileURL == nil, WorkspaceNavigator.nextUntitledBelongsToWorkspace {
             WorkspaceNavigator.nextUntitledBelongsToWorkspace = false
             createdInWorkspace = true
         }
-        scheduleAnalysis(editor.text, delay: 0)
         watchFile()
         WorkspaceNavigator.register(self, for: fileURL)
+        #endif
     }
 
     private func makeEditor() -> EditorController {
@@ -114,12 +150,23 @@ final class DocumentSession {
                 editor?.textView.undoManager?.undo()
             }
         }
+        #if os(iOS)
+        editor.onEditingChange = { [weak self] editing in
+            self?.isEditing = editing
+        }
+        editor.onFormat = { [weak self] command in
+            self?.perform(command)
+        }
+        editor.textView.onError = { [weak self] message in
+            self?.showToast(message, systemImage: "exclamationmark.triangle")
+        }
+        #endif
         return editor
     }
 
     private func makePreview() -> PreviewController {
         let preview = PreviewController()
-        preview.documentDirectory = fileURL?.deletingLastPathComponent()
+        preview.documentDirectory = documentDirectory
         // VoiceOver names the web area after the document instead of "Preview".
         preview.documentTitle = title
         preview.zoom = zoom
@@ -138,9 +185,16 @@ final class DocumentSession {
         preview.onToggleTask = { [weak self] line in
             self?.editor.toggleTask(atLine: line)
         }
+        #if os(macOS)
         preview.onOpenDocument = { url, anchor in
             WorkspaceNavigator.open(url, anchor: anchor)
         }
+        #else
+        // iOS apps can't open another document by path; the browser can.
+        preview.onOpenDocument = { [weak self] url, _ in
+            self?.showToast("Open “\(url.lastPathComponent)” from the document browser.", systemImage: "doc.text.magnifyingglass")
+        }
+        #endif
         return preview
     }
 
@@ -150,14 +204,18 @@ final class DocumentSession {
             WritingGoal.store(goal, for: url)
             sessionGoal = nil
         }
+        documentDirectory = Self.readableDirectory(of: fileURL)
         editor.documentURL = fileURL
-        preview.documentDirectory = fileURL?.deletingLastPathComponent()
+        preview.documentDirectory = documentDirectory
         preview.documentTitle = title
         preview.render(editor.text)
+        #if os(macOS)
         watchFile()
         WorkspaceNavigator.register(self, for: fileURL)
+        #endif
     }
 
+    #if os(macOS)
     // MARK: - Changes made by other apps
 
     private func watchFile() {
@@ -187,16 +245,22 @@ final class DocumentSession {
         onTextChange?(diskText)
         documentTextChanged(diskText)
     }
+    #endif
 
     // MARK: - Text flow
 
     var text: String { editor.text }
 
     var title: String {
+        #if os(macOS)
         fileURL?.deletingPathExtension().lastPathComponent ?? window?.title ?? "Untitled"
+        #else
+        fileURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        #endif
     }
 
     private func textDidChange(_ text: String) {
+        if isEmpty != text.isEmpty { isEmpty = text.isEmpty }
         onTextChange?(text)
         scheduleRender(text)
         scheduleAnalysis(text)
@@ -206,6 +270,7 @@ final class DocumentSession {
     func documentTextChanged(_ text: String) {
         guard text != editor.text else { return }
         editor.setText(text)
+        if isEmpty != text.isEmpty { isEmpty = text.isEmpty }
         scheduleRender(text)
         scheduleAnalysis(text)
     }
@@ -226,7 +291,7 @@ final class DocumentSession {
         analysisTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             guard !Task.isCancelled, let self else { return }
-            let directory = self.fileURL?.deletingLastPathComponent()
+            let directory = self.documentDirectory
             let check = self.checkDocument
             let (outline, statistics, problems) = await Task.detached(priority: .utility) {
                 (OutlineParser.parse(text), DocumentStatistics(text),
@@ -260,7 +325,7 @@ final class DocumentSession {
     /// few hundred milliseconds older than the text, and stale ranges would
     /// edit the wrong characters (or fall outside the text).
     func fix(_ problem: DocumentProblem) {
-        let current = DocumentChecker.check(editor.text, documentDirectory: fileURL?.deletingLastPathComponent())
+        let current = DocumentChecker.check(editor.text, documentDirectory: documentDirectory)
         guard let fresh = current.first(where: { $0.message == problem.message && $0.line == problem.line })
                 ?? current.first(where: { $0.message == problem.message }),
               let fix = fresh.fix
@@ -280,6 +345,7 @@ final class DocumentSession {
         if tab == .search { searchFocusRequest += 1 }
     }
 
+    #if os(macOS)
     // MARK: - Tabs
 
     /// Folder windows always show their tab bar, so it's clear files open as tabs.
@@ -309,6 +375,7 @@ final class DocumentSession {
 
     private static let workspaceTabbingIdentifier = "MarkdownStudio.workspace"
     @ObservationIgnored private var originalTabbingIdentifier: String?
+    #endif
 
     // MARK: - Tour
 
@@ -337,6 +404,7 @@ final class DocumentSession {
 
     // MARK: - Presentation
 
+    #if os(macOS)
     func startPresentation(separator: SlideSeparator) {
         PresentationController.start(markdown: editor.text, documentURL: fileURL, configuration: previewConfiguration,
                                      separator: separator, from: window)
@@ -348,6 +416,29 @@ final class DocumentSession {
                                                    configuration: previewConfiguration, separator: separator, window: window)
         }
     }
+    #else
+    func startPresentation(separator: SlideSeparator) {
+        editor.textView.resignFirstResponder()
+        isPresentingSlides = true
+    }
+
+    func exportSlidesPDF(separator: SlideSeparator) {
+        let markdown = editor.text, title = title, url = fileURL, configuration = previewConfiguration
+        share {
+            try await SlideShowView.pdfFile(markdown: markdown, title: title, documentURL: url,
+                                            configuration: configuration, separator: separator)
+        }
+    }
+
+    /// The slides' folder for images, when the app may read it.
+    var slidesDirectory: URL? { documentDirectory }
+
+    /// Fills an empty document with a template (one undo step).
+    func insertTemplate(_ text: String) {
+        if viewMode == .preview { viewMode = .split }
+        editor.insert(text, actionName: "Insert Template")
+    }
+    #endif
 
     // MARK: - Writing goal
 
@@ -433,6 +524,7 @@ final class DocumentSession {
     func zoomOut() { zoom = max(0.5, (zoom * 10 - 1).rounded() / 10) }
     func resetZoom() { zoom = 1 }
 
+    #if os(macOS)
     func toggleDistractionFree() {
         distractionFree.toggle()
         guard let window else { return }
@@ -453,6 +545,53 @@ final class DocumentSession {
     func printDocument() { Task { await ExportService.print(exportSource) } }
     func copyHTML() { Task { await ExportService.copyHTML(exportSource) } }
     func copyRichText() { Task { await ExportService.copyRichText(exportSource) } }
+    #else
+    // MARK: - Export
+
+    private var exportSource: ExportService.Source {
+        ExportService.Source(markdown: editor.text, title: title, documentURL: fileURL, configuration: previewConfiguration)
+    }
+
+    func exportHTML() {
+        let source = exportSource
+        share { try await ExportService.htmlFile(source) }
+    }
+
+    func exportPDF() {
+        let source = exportSource
+        share { try await ExportService.pdfFile(source) }
+    }
+
+    func printDocument() { Task { await ExportService.print(exportSource) } }
+
+    func copyHTML() {
+        Task {
+            await ExportService.copyHTML(exportSource)
+            showToast("Copied as HTML", systemImage: "doc.on.clipboard")
+        }
+    }
+
+    func copyRichText() {
+        Task {
+            await ExportService.copyRichText(exportSource)
+            showToast("Copied as rich text", systemImage: "doc.on.clipboard")
+        }
+    }
+
+    /// Makes the file (rendering can take a moment), then opens the share sheet.
+    private func share(_ makeFile: @escaping () async throws -> URL) {
+        guard !isExporting else { return }
+        isExporting = true
+        Task {
+            defer { isExporting = false }
+            do {
+                sharedFile = SharedFile(url: try await makeFile())
+            } catch {
+                showToast("Export failed: \(error.localizedDescription)", systemImage: "exclamationmark.triangle")
+            }
+        }
+    }
+    #endif
 }
 
 extension FocusedValues {

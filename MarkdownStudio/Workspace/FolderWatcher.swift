@@ -1,3 +1,4 @@
+#if os(macOS)
 import CoreServices
 import Foundation
 
@@ -31,3 +32,4 @@ final class FolderWatcher {
         FSEventStreamRelease(stream)
     }
 }
+#endif

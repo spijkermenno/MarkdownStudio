@@ -5,10 +5,19 @@ struct DocumentView: View {
     let fileURL: URL?
 
     @State private var session: DocumentSession
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(macOS)
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    #else
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.undoManager) private var undoManager
+    @State private var isShowingOutline = false
+    @State private var isShowingSettings = false
+    @State private var isShowingCheatSheet = false
+    @AppStorage(SettingsKey.appearance) private var appearance = AppearanceMode.system
+    #endif
 
     @SceneStorage("viewMode") private var storedViewMode = ""
     @SceneStorage("splitOrientation") private var storedOrientation = ""
@@ -63,69 +72,165 @@ struct DocumentView: View {
     }
 
     var body: some View {
+        layout
+            .toolbar { toolbar }
+            .focusedSceneValue(\.session, session)
+            .sheet(isPresented: $session.isShowingGoToLine) {
+                GoToLineView(session: session)
+                    #if os(iOS)
+                    .presentationDetents([.height(190)])
+                    #endif
+            }
+            .onAppear(perform: setUp)
+            // A revert hands us a freshly read document object.
+            .onChange(of: ObjectIdentifier(document)) { _, _ in
+                session.onTextChange = { [document] in document.text = $0 }
+                session.documentTextChanged(document.text)
+            }
+            .onChange(of: fileURL) { _, url in session.fileURL = url }
+            .onChange(of: editorConfiguration) { _, configuration in session.editor.configure(configuration) }
+            .onChange(of: previewConfiguration) { _, configuration in session.applyPreviewConfiguration(configuration) }
+            .onChange(of: syncScroll) { _, value in session.syncScroll = value }
+            .onChange(of: checkDocument) { _, value in session.checkDocument = value }
+            .onChange(of: session.viewMode) { _, mode in storedViewMode = mode.rawValue }
+            .onChange(of: session.splitOrientation) { _, orientation in storedOrientation = orientation.rawValue }
+    }
+
+    #if os(macOS)
+    private var layout: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(session: session)
                 .tourHighlight(session.tourTarget == .sidebar)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 240, max: 400)
         } detail: {
-            VStack(spacing: 0) {
-                if showFormattingBar && session.viewMode.showsEditor && !session.distractionFree {
-                    FormattingBar(session: session)
-                    Divider()
-                }
-                content
-                    .overlay(alignment: .bottom) {
-                        if let toast = session.toast {
-                            ToastView(toast: toast, hovering: { session.isToastHovered = $0 }) { session.toast = nil }
-                                .padding(.bottom, 14)
-                                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                        }
-                    }
-                    .animation(.easeOut(duration: 0.2), value: session.toast?.id)
-                    .overlay(alignment: tourCardAlignment) {
-                        TourCard(session: session).padding(20)
-                    }
-                    .animation(.easeOut(duration: 0.25), value: session.tourStep)
-                if showProblems && checkDocument && !session.distractionFree {
-                    Divider()
-                    ProblemsPanel(session: session)
-                }
-                if showStatusBar && !session.distractionFree {
-                    Divider()
-                    StatusBarView(session: session)
-                        .tourHighlight(session.tourTarget == .statusBar, inset: 0)
-                }
-            }
+            detail
         }
         .frame(minWidth: 560, minHeight: 360)
-        .toolbar { toolbar }
         .toolbar(session.distractionFree ? .hidden : .automatic, for: .windowToolbar)
-        .focusedSceneValue(\.session, session)
         .background(WindowAccessor { session.window = $0 })
-        .sheet(isPresented: $session.isShowingGoToLine) { GoToLineView(session: session) }
-        .onAppear(perform: setUp)
-        // A revert hands us a freshly read document object.
-        .onChange(of: ObjectIdentifier(document)) { _, _ in
-            session.onTextChange = { [document] in document.text = $0 }
-            session.documentTextChanged(document.text)
-        }
-        .onChange(of: fileURL) { _, url in session.fileURL = url }
-        .onChange(of: editorConfiguration) { _, configuration in session.editor.configure(configuration) }
-        .onChange(of: previewConfiguration) { _, configuration in session.applyPreviewConfiguration(configuration) }
-        .onChange(of: syncScroll) { _, value in session.syncScroll = value }
-        .onChange(of: checkDocument) { _, value in session.checkDocument = value }
         .onChange(of: session.sidebarRequest) { _, _ in columnVisibility = .all }
         .onChange(of: session.isInWorkspace) { _, inside in showFolderTree(inside) }
-        .onChange(of: session.viewMode) { _, mode in storedViewMode = mode.rawValue }
-        .onChange(of: session.splitOrientation) { _, orientation in storedOrientation = orientation.rawValue }
         .onChange(of: columnVisibility) { _, visibility in showOutline = visibility != .detailOnly }
         .onChange(of: session.distractionFree) { _, enabled in
             columnVisibility = enabled || !showOutline ? .detailOnly : .all
         }
     }
 
+    private var detail: some View {
+        VStack(spacing: 0) {
+            if showFormattingBar && session.viewMode.showsEditor && !session.distractionFree {
+                FormattingBar(session: session)
+                Divider()
+            }
+            documentArea
+            if showProblems && checkDocument && !session.distractionFree {
+                Divider()
+                ProblemsPanel(session: session)
+            }
+            if showStatusBar && !session.distractionFree {
+                Divider()
+                StatusBarView(session: session)
+                    .tourHighlight(session.tourTarget == .statusBar, inset: 0)
+            }
+        }
+    }
+    #else
+    private var isCompact: Bool { horizontalSizeClass == .compact }
+
+    /// iPhones (and narrow iPad windows) show the editor or the preview, not both.
+    private var displayedViewMode: ViewMode {
+        isCompact && session.viewMode == .split ? .editor : session.viewMode
+    }
+
+    /// The bars under the document give way to the keyboard on small screens.
+    private var showsBottomBars: Bool { !(isCompact && session.isEditing) }
+
+    private var layout: some View {
+        detail
+            .toolbarRole(.editor)
+            .inspector(isPresented: $isShowingOutline) {
+                OutlineView(session: session, onJump: {
+                    // On iPhone the outline covers the document, so get out of the way.
+                    if isCompact { isShowingOutline = false }
+                })
+                .inspectorColumnWidth(min: 220, ideal: 280, max: 400)
+                .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $isShowingSettings) { SettingsView() }
+            .sheet(isPresented: $isShowingCheatSheet) {
+                NavigationStack {
+                    CheatSheetView()
+                        .navigationTitle("Cheat Sheet")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { isShowingCheatSheet = false }
+                            }
+                        }
+                }
+            }
+            .sheet(item: $session.sharedFile) { file in
+                ShareSheet(url: file.url)
+                    .presentationDetents([.medium, .large])
+            }
+            .fullScreenCover(isPresented: $session.isPresentingSlides) {
+                SlideShowView(markdown: session.text, title: session.title, documentDirectory: session.slidesDirectory,
+                              configuration: previewConfiguration, separator: slideSeparator) { message in
+                    session.isPresentingSlides = false
+                    if let message { session.showToast(message, systemImage: "rectangle.on.rectangle.slash") }
+                }
+            }
+            .overlay {
+                if session.isExporting {
+                    ProgressView("Preparing…")
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+            .onChange(of: session.sidebarRequest) { _, _ in isShowingOutline = true }
+            .onChange(of: showFormattingBar, initial: true) { _, show in session.editor.showsFormattingBar = show }
+            .onChange(of: undoManager.map(ObjectIdentifier.init), initial: true) { _, _ in
+                session.editor.textView.documentUndoManager = undoManager
+            }
+            .onChange(of: appearance) { _, mode in Platform.apply(mode) }
+    }
+
+    private var detail: some View {
+        VStack(spacing: 0) {
+            documentArea
+            if showProblems && checkDocument && showsBottomBars {
+                Divider()
+                ProblemsPanel(session: session)
+            }
+            if showStatusBar && showsBottomBars {
+                Divider()
+                StatusBarView(session: session)
+            }
+        }
+    }
+    #endif
+
+    /// The editor and/or preview, with the toast and the tour card on top.
+    private var documentArea: some View {
+        content
+            .overlay(alignment: .bottom) {
+                if let toast = session.toast {
+                    ToastView(toast: toast, hovering: { session.isToastHovered = $0 }) { session.toast = nil }
+                        .padding(.bottom, 14)
+                        .padding(.horizontal, 16)
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: session.toast?.id)
+            .overlay(alignment: tourCardAlignment) {
+                TourCard(session: session).padding(20)
+            }
+            .animation(.easeOut(duration: 0.25), value: session.tourStep)
+    }
+
     @ViewBuilder
     private var content: some View {
+        #if os(macOS)
         switch session.viewMode {
         case .editor:
             editorPane
@@ -144,10 +249,35 @@ struct DocumentView: View {
                 }
             }
         }
+        #else
+        switch displayedViewMode {
+        case .editor:
+            editorPane
+        case .preview:
+            previewPane
+        case .split:
+            let horizontal = session.splitOrientation == .horizontal
+            SplitPane(axis: horizontal ? .horizontal : .vertical, minimum: horizontal ? 220 : 120) {
+                editorPane
+            } second: {
+                previewPane
+            }
+        }
+        #endif
     }
 
     private var editorPane: some View {
-        EditorHost(controller: session.editor).tourHighlight(session.tourTarget == .editor)
+        EditorHost(controller: session.editor)
+            .tourHighlight(session.tourTarget == .editor)
+            #if os(iOS)
+            .overlay {
+                if session.isEmpty && !session.isEditing {
+                    TemplatePicker(session: session)
+                        .padding(20)
+                        .transition(.opacity)
+                }
+            }
+            #endif
     }
 
     private var previewPane: some View {
@@ -164,6 +294,7 @@ struct DocumentView: View {
         }
     }
 
+    #if os(macOS)
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
@@ -212,7 +343,80 @@ struct DocumentView: View {
             .help("Export, copy or print the rendered document")
         }
     }
+    #else
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            Picker("View Mode", selection: Binding(get: { displayedViewMode }, set: { session.viewMode = $0 })) {
+                ForEach(isCompact ? [ViewMode.editor, .preview] : ViewMode.allCases) { mode in
+                    Label(mode.title, systemImage: mode.systemImage)
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel(mode.title)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            if !isCompact {
+                if session.viewMode == .split {
+                    Button {
+                        session.splitOrientation = session.splitOrientation == .horizontal ? .vertical : .horizontal
+                    } label: {
+                        Label(session.splitOrientation == .horizontal ? "Split Top and Bottom" : "Split Side by Side",
+                              systemImage: session.splitOrientation == .horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1")
+                    }
+                }
+                Button {
+                    session.startPresentation(separator: slideSeparator)
+                } label: {
+                    Label("Present", systemImage: "play.rectangle")
+                }
+                Menu {
+                    exportItems
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+            }
+            Button {
+                isShowingOutline.toggle()
+            } label: {
+                Label("Outline", systemImage: "list.bullet.indent")
+            }
+            Menu {
+                if isCompact {
+                    Button("Present", systemImage: "play.rectangle") { session.startPresentation(separator: slideSeparator) }
+                    Menu("Export", systemImage: "square.and.arrow.up") { exportItems }
+                    Divider()
+                }
+                Button("Go to Line…", systemImage: "arrow.right.to.line") { session.isShowingGoToLine = true }
+                if checkDocument {
+                    Toggle(isOn: $showProblems) { Label("Show Problems", systemImage: "exclamationmark.triangle") }
+                }
+                Divider()
+                Button("Markdown Cheat Sheet", systemImage: "questionmark.circle") { isShowingCheatSheet = true }
+                Button("Settings", systemImage: "gearshape") { isShowingSettings = true }
+            } label: {
+                Label("More", systemImage: "ellipsis")
+            }
+        }
+    }
 
+    @ViewBuilder
+    private var exportItems: some View {
+        Button("Share as HTML…", systemImage: "chevron.left.forwardslash.chevron.right", action: session.exportHTML)
+        Button("Share as PDF…", systemImage: "doc.richtext", action: session.exportPDF)
+        Button("Share Slides as PDF…", systemImage: "rectangle.on.rectangle") { session.exportSlidesPDF(separator: slideSeparator) }
+        Divider()
+        Button("Copy as HTML", systemImage: "doc.on.clipboard", action: session.copyHTML)
+        Button("Copy as Rich Text", systemImage: "doc.on.clipboard.fill", action: session.copyRichText)
+        Divider()
+        Button("Print…", systemImage: "printer", action: session.printDocument)
+    }
+    #endif
+
+    #if os(macOS)
     /// Documents from the open folder show its tree; others fall back to the outline.
     private func showFolderTree(_ inside: Bool) {
         session.updateTabBar()
@@ -225,28 +429,81 @@ struct DocumentView: View {
         }
     }
 
+    #endif
+
     private func setUp() {
+        #if os(macOS)
         // A document is open, so the Welcome window has done its job.
         WelcomeWindow.openWindow = openWindow
         dismissWindow(id: WelcomeWindow.id)
+        #endif
         if let mode = ViewMode(rawValue: storedViewMode) { session.viewMode = mode }
         if let orientation = SplitOrientation(rawValue: storedOrientation) { session.splitOrientation = orientation }
+        #if os(macOS)
         columnVisibility = showOutline ? .all : .detailOnly
+        #else
+        Platform.apply(appearance)
+        #endif
         session.onTextChange = { [document] in document.text = $0 }
         session.syncScroll = syncScroll
         session.checkDocument = checkDocument
         session.applyPreviewConfiguration(previewConfiguration)
         session.editor.configure(editorConfiguration)
         session.start()
+        #if os(macOS)
         showFolderTree(session.isInWorkspace)
         if document.isTour {
             session.startTour()
         } else if Onboarding.shouldPresentAutomatically() {
             openWindow(id: Onboarding.windowID)
         }
+        #endif
     }
 }
 
+#if os(iOS)
+/// Shown in an empty document: start from one of the templates (File → New
+/// from Template on the Mac) or just start typing.
+private struct TemplatePicker: View {
+    let session: DocumentSession
+    @State private var templates: [DocumentTemplate] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Start from a template")
+                .font(.headline)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+            ForEach(templates) { template in
+                row(template.name, systemImage: "doc.text") { session.insertTemplate(template.filled()) }
+            }
+            row("Markdown Showcase", systemImage: "sparkles") { session.insertTemplate(Showcase.text) }
+            Text("Or tap anywhere to start typing.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+        }
+        .padding(.vertical, 14)
+        .frame(maxWidth: 360)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.separator))
+        .onAppear { templates = TemplateLibrary.all }
+    }
+
+    private func row(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 12)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+#endif
+
+#if os(macOS)
 // MARK: - AppKit hosts
 
 /// Hosts a session-owned AppKit view. The same view is reused across
@@ -328,3 +585,4 @@ struct WindowAccessor: NSViewRepresentable {
         if let window = view.window { onWindow(window) }
     }
 }
+#endif

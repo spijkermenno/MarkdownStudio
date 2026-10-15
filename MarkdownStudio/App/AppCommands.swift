@@ -18,11 +18,13 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         // File
+        #if os(macOS)
         CommandGroup(after: .newItem) {
             TemplateMenu()
             Divider()
             FolderMenuItems()
         }
+        #endif
         CommandGroup(after: .importExport) {
             Menu("Export") {
                 Button("HTML…") { session?.exportHTML() }
@@ -42,10 +44,13 @@ struct AppCommands: Commands {
 
         // Edit
         CommandGroup(after: .pasteboard) {
+            #if os(macOS)
+            // iPadOS has Edit → Paste and Match Style on the same keys.
             Button("Paste as Plain Text") { session?.editor.textView.pasteAsPlainText(nil) }
                 .keyboardShortcut("v", modifiers: [.command, .option, .shift])
                 .disabled(!canEdit)
             Divider()
+            #endif
             Button("Copy as HTML") { session?.copyHTML() }
                 .keyboardShortcut("c", modifiers: [.command, .option, .shift])
                 .disabled(!canEdit)
@@ -57,9 +62,11 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("l")
             .disabled(!canEdit)
+            #if os(macOS)
             Button("Find in Folder…") { session?.showSidebar(.search) }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(!(session?.isInWorkspace ?? false))
+            #endif
         }
 
         // Format (replaces the rich-text Font/Text items)
@@ -123,14 +130,18 @@ struct AppCommands: Commands {
             Toggle("Typewriter Scrolling", isOn: $typewriterScrolling)
             Toggle("Focus Mode", isOn: $focusMode)
                 .keyboardShortcut("f", modifiers: [.command, .option, .shift])
+            #if os(macOS)
             Button(session?.distractionFree == true ? "Exit Distraction-Free Mode" : "Distraction-Free Mode") {
                 session?.toggleDistractionFree()
             }
             .keyboardShortcut("d", modifiers: [.command, .control, .shift])
             .disabled(!canEdit)
+            #endif
             Divider()
             Button("Show Outline") { session?.showSidebar(.outline) }.disabled(!canEdit)
+            #if os(macOS)
             Button("Show Files") { session?.showSidebar(.files) }.disabled(!(session?.isInWorkspace ?? false))
+            #endif
             Toggle("Show Problems", isOn: $showProblems)
                 .keyboardShortcut("m", modifiers: [.command, .shift])
             Divider()
@@ -146,6 +157,7 @@ struct AppCommands: Commands {
             Divider()
         }
 
+        #if os(macOS)
         // Window
         CommandGroup(before: .windowList) {
             WelcomeMenuItem()
@@ -156,6 +168,7 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .help) {
             HelpMenuItems()
         }
+        #endif
     }
 
     private func formatButton(_ title: String, _ command: FormatCommand, _ key: KeyEquivalent?,
@@ -175,6 +188,7 @@ struct AppCommands: Commands {
     }
 }
 
+#if os(macOS)
 /// File → New from Template.
 struct TemplateMenu: View {
     @Environment(\.newDocument) private var newDocument
@@ -237,6 +251,7 @@ private struct HelpMenuItems: View {
         Link("Markdown Guide Website", destination: URL(string: "https://www.markdownguide.org/")!)
     }
 }
+#endif
 
 nonisolated enum Showcase {
     static var text: String {

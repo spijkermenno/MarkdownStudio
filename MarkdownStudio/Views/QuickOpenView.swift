@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// ⌘P: type a few letters of any file in the open folder (or a recent file).
@@ -153,3 +154,4 @@ enum QuickOpen {
         }
     }
 }
+#endif

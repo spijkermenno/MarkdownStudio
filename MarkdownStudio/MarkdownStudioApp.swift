@@ -2,9 +2,16 @@ import SwiftUI
 
 @main
 struct MarkdownStudioApp: App {
+    #if os(macOS)
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    #endif
     @AppStorage(SettingsKey.appearance) private var appearance = AppearanceMode.system
 
+    init() {
+        PlatformDefaults.register()
+    }
+
+    #if os(macOS)
     var body: some Scene {
         DocumentGroup(newDocument: { MarkdownDocument() }) { file in
             DocumentView(document: file.document, fileURL: file.fileURL)
@@ -75,4 +82,26 @@ struct MarkdownStudioApp: App {
         .defaultSize(width: 640, height: 720)
         .windowResizability(.contentMinSize)
     }
+    #else
+    var body: some Scene {
+        // The document browser, with the app's name and a New Document button.
+        DocumentGroupLaunchScene("Markdown Studio") {
+            NewDocumentButton("New Document")
+        } background: {
+            LinearGradient(colors: [Color.accentColor.opacity(0.9), Color.accentColor.opacity(0.45)],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+        }
+
+        DocumentGroup(newDocument: { MarkdownDocument() }) { file in
+            DocumentView(document: file.document, fileURL: file.fileURL)
+        }
+        .commands {
+            AppCommands()
+        }
+        .onChange(of: appearance, initial: true) { _, mode in
+            Platform.apply(mode)
+        }
+    }
+    #endif
 }

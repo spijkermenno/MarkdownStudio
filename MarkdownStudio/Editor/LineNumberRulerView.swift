@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// Draws source line numbers beside the editor (TextKit 1).
@@ -82,3 +83,4 @@ final class LineNumberRulerView: NSRulerView {
         }
     }
 }
+#endif

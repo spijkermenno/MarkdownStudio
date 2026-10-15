@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// Shown at launch: create a document, open one, or pick a recent file.
@@ -218,3 +219,4 @@ private struct RecentFileRow: View {
         .padding(.vertical, 3)
     }
 }
+#endif

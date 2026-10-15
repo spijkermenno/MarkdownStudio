@@ -1,8 +1,13 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 /// Small helpers for VoiceOver announcements and the system accessibility settings.
 enum AccessibilitySupport {
+    #if os(macOS)
     static var isVoiceOverRunning: Bool { NSWorkspace.shared.isVoiceOverEnabled }
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -15,6 +20,20 @@ enum AccessibilitySupport {
         NSAccessibility.post(element: element, notification: .announcementRequested,
                              userInfo: [.announcement: message, .priority: priority.rawValue])
     }
+    #else
+    static var isVoiceOverRunning: Bool { UIAccessibility.isVoiceOverRunning }
+
+    static var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
+
+    /// Speaks `message` with VoiceOver without moving focus.
+    static func announce(_ message: String, highPriority: Bool = false) {
+        guard !message.isEmpty else { return }
+        let announcement = NSAttributedString(string: message, attributes: [
+            .accessibilitySpeechAnnouncementPriority: highPriority ? UIAccessibilityPriority.high : .default,
+        ])
+        UIAccessibility.post(notification: .announcement, argument: announcement)
+    }
+    #endif
 
     /// The text VoiceOver reads for a suggestion list, for example
     /// "4 suggestions. tada, 1 of 4. Press Tab to insert."
@@ -50,13 +69,18 @@ struct CardButtonStyle: ButtonStyle {
         let cornerRadius: CGFloat
         let filled: Bool
         @Environment(\.isFocused) private var isFocused
+        #if os(macOS)
+        private static let focusRingColor = Color(nsColor: .keyboardFocusIndicatorColor)
+        #else
+        private static let focusRingColor = Color.accentColor
+        #endif
 
         var body: some View {
             let shape = RoundedRectangle(cornerRadius: cornerRadius)
             configuration.label
                 .background(filled ? AnyShapeStyle(.quaternary.opacity(configuration.isPressed ? 1 : 0.6)) : AnyShapeStyle(.clear), in: shape)
                 .overlay {
-                    if isFocused { shape.strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3) }
+                    if isFocused { shape.strokeBorder(Self.focusRingColor, lineWidth: 3) }
                 }
                 .opacity(!filled && configuration.isPressed ? 0.8 : 1)
         }

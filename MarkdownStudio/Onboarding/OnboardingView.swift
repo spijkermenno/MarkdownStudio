@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// The first-run setup window. Every choice is applied immediately; the last
@@ -454,3 +455,4 @@ private extension PreviewTheme {
         }
     }
 }
+#endif

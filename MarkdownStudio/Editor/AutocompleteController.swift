@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Observation
 import SwiftUI
@@ -185,3 +186,4 @@ private struct CompletionListView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
     }
 }
+#endif

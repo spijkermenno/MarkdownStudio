@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 enum ViewMode: String, CaseIterable, Identifiable {
     case editor, split, preview
@@ -44,6 +47,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         }
     }
 
+    #if os(macOS)
     /// `nil` follows the system setting.
     var appearance: NSAppearance? {
         switch self {
@@ -52,6 +56,16 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         case .dark: NSAppearance(named: .darkAqua)
         }
     }
+    #else
+    /// `.unspecified` follows the system setting.
+    var interfaceStyle: UIUserInterfaceStyle {
+        switch self {
+        case .system: .unspecified
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+    #endif
 }
 
 enum PreviewTheme: String, CaseIterable, Identifiable {
@@ -124,10 +138,37 @@ struct EditorConfiguration: Equatable {
     var autocomplete = true
     var pasteAsMarkdown = true
 
+    #if os(macOS)
     var font: NSFont {
         let size = CGFloat(fontSize * zoom)
         if !fontName.isEmpty, let font = NSFont(name: fontName, size: size) { return font }
         return .monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+    #else
+    /// Scaled with Dynamic Type, so the editor follows the system text size.
+    var font: UIFont {
+        let size = UIFontMetrics(forTextStyle: .body).scaledValue(for: CGFloat(fontSize * zoom))
+        if !fontName.isEmpty {
+            let descriptor = UIFontDescriptor(fontAttributes: [.family: fontName])
+            let font = UIFont(descriptor: descriptor, size: size)
+            if font.familyName == fontName { return font }
+        }
+        return .monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+    #endif
+}
+
+/// Settings whose best default differs per platform. Registered at launch, so
+/// every `@AppStorage` that reads these keys sees the same value.
+enum PlatformDefaults {
+    static func register() {
+        #if os(iOS)
+        UserDefaults.standard.register(defaults: [
+            // On iPhone and iPad the formatting bar sits above the keyboard.
+            SettingsKey.showFormattingBar: true,
+            SettingsKey.editorFontSize: 16.0,
+        ])
+        #endif
     }
 }
 
