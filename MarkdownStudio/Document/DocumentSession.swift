@@ -56,7 +56,9 @@ final class DocumentSession {
         didSet { updateFileURL() }
     }
 
-    @ObservationIgnored weak var window: NSWindow?
+    @ObservationIgnored weak var window: NSWindow? {
+        didSet { if window !== oldValue { updateTabBar() } }
+    }
     /// Writes edits back into the SwiftUI document.
     @ObservationIgnored var onTextChange: ((String) -> Void)?
     @ObservationIgnored var previewConfiguration = PreviewConfiguration()
@@ -278,6 +280,36 @@ final class DocumentSession {
     }
 
     // MARK: - Tour
+    // MARK: - Tabs
+
+    /// Folder windows always show their tab bar, so it's clear files open as tabs.
+    /// They get their own tabbing identifier because AppKit remembers tab bar
+    /// visibility per identifier, and single documents shouldn't inherit it.
+    func updateTabBar() {
+        guard let window else { return }
+        if originalTabbingIdentifier == nil { originalTabbingIdentifier = window.tabbingIdentifier }
+        // A new document from the tab bar's + button belongs to the folder too.
+        if fileURL == nil, !createdInWorkspace, Workspace.shared.rootURL != nil,
+           window.tabbedWindows?.contains(where: { other in
+               other !== window && WorkspaceNavigator.openSessions.contains { $0.window === other && $0.isInWorkspace }
+           }) == true {
+            createdInWorkspace = true
+        }
+        let showsTabs = isInWorkspace
+        let isTabBarVisible = window.tabGroup?.isTabBarVisible ?? false
+        if showsTabs {
+            window.tabbingIdentifier = Self.workspaceTabbingIdentifier
+            if !isTabBarVisible { window.toggleTabBar(nil) }
+        } else if window.tabbingIdentifier == Self.workspaceTabbingIdentifier {
+            // Out of the folder (closed, or the file moved out): back to a plain window.
+            if isTabBarVisible, (window.tabbedWindows?.count ?? 1) <= 1 { window.toggleTabBar(nil) }
+            window.tabbingIdentifier = originalTabbingIdentifier ?? ""
+        }
+    }
+
+    private static let workspaceTabbingIdentifier = "MarkdownStudio.workspace"
+    @ObservationIgnored private var originalTabbingIdentifier: String?
+
 
     func startTour() {
         TourStep.activeSession = self

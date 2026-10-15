@@ -68,9 +68,7 @@ struct FilesView: View {
                     if workspace.tree.isEmpty && !workspace.isLoading {
                         Text("No Markdown files in this folder").foregroundStyle(.secondary)
                     }
-                    OutlineGroup(workspace.tree, children: \.children) { node in
-                        row(node)
-                    }
+                    nodes(workspace.tree)
                 } header: {
                     HStack {
                         Text(root.lastPathComponent).lineLimit(1)
@@ -107,6 +105,32 @@ struct FilesView: View {
         }
     }
 
+    /// Like OutlineGroup, but the expanded folders live in the workspace, so
+    /// every tab of the folder window shows the tree the same way.
+    private func nodes(_ nodes: [FileNode]) -> AnyView {
+        AnyView(ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: expansion(of: node.url)) {
+                    self.nodes(children)
+                } label: {
+                    row(node)
+                }
+            } else {
+                row(node)
+            }
+        })
+    }
+
+    private func expansion(of folder: URL) -> Binding<Bool> {
+        let key = folder.standardizedFileURL
+        return Binding(
+            get: { workspace.expandedFolders.contains(key) },
+            set: { expanded in
+                if expanded { workspace.expandedFolders.insert(key) } else { workspace.expandedFolders.remove(key) }
+            }
+        )
+    }
+
     @ViewBuilder
     private func rowLabel(_ node: FileNode, isCurrent: Bool) -> some View {
         Label {
@@ -131,7 +155,7 @@ struct FilesView: View {
                 Button { WorkspaceNavigator.open(node.url) } label: { rowLabel(node, isCurrent: isCurrent) }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(isCurrent ? .isSelected : [])
-                    .accessibilityHint(isCurrent ? "Open in this window" : "Opens the file")
+                    .accessibilityHint(isCurrent ? "Open in this tab" : "Opens the file in a tab")
             }
         }
         .help(workspace.relativePath(of: node.url))
@@ -192,15 +216,16 @@ struct FilesView: View {
 
 struct FolderSearchView: View {
     let session: DocumentSession
-    @State private var query = ""
     @State private var results: [SearchResult] = []
     @State private var isSearching = false
     @FocusState private var fieldFocused: Bool
-    private var workspace: Workspace { Workspace.shared }
+    /// Shared, so the search is still there in the tab a result opens in.
+    @Bindable private var workspace = Workspace.shared
+    private var query: String { workspace.searchQuery }
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Find in Folder", text: $query)
+            TextField("Find in Folder", text: $workspace.searchQuery)
                 .textFieldStyle(.roundedBorder)
                 .focused($fieldFocused)
                 .padding(.horizontal, 10)

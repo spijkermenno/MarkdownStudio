@@ -28,6 +28,9 @@ final class Workspace {
     /// Every Markdown file, for Quick Open.
     private(set) var files: [URL] = []
     private(set) var isLoading = false
+    /// Folder tree and search state, shared so every tab's sidebar looks the same.
+    var expandedFolders: Set<URL> = []
+    var searchQuery = ""
 
     @ObservationIgnored private var watcher: FolderWatcher?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
@@ -51,6 +54,10 @@ final class Workspace {
     /// folder (and the folder tree in its sidebar) appears once it's scanned.
     func open(_ url: URL, showingAFile: Bool = false) {
         openStartingFileWhenLoaded = showingAFile
+        if url.standardizedFileURL != rootURL {
+            expandedFolders = []
+            searchQuery = ""
+        }
         rootURL = url.standardizedFileURL
         UserDefaults.standard.set(url.path, forKey: Self.rootKey)
         watcher = FolderWatcher(url: url) { [weak self] in self?.scheduleReload() }
@@ -61,6 +68,8 @@ final class Workspace {
         rootURL = nil
         tree = []
         files = []
+        expandedFolders = []
+        searchQuery = ""
         watcher = nil
         UserDefaults.standard.removeObject(forKey: Self.rootKey)
     }
@@ -108,6 +117,24 @@ final class Workspace {
     func contains(_ url: URL?) -> Bool {
         guard let url, let rootURL else { return false }
         return Self.isPath(url, inside: rootURL)
+    }
+
+    /// Expands the folders above `url`, so the file shows in the tree.
+    func reveal(_ url: URL) {
+        guard let root = rootURL, contains(url) else { return }
+        expandedFolders.formUnion(Self.folders(above: url, in: root))
+    }
+
+    /// The folders between `root` and `url`, innermost first (not `root` itself).
+    nonisolated static func folders(above url: URL, in root: URL) -> [URL] {
+        let rootPath = root.standardizedFileURL.path
+        var folders: [URL] = []
+        var folder = url.deletingLastPathComponent().standardizedFileURL
+        while folder.path.hasPrefix(rootPath + "/") {
+            folders.append(folder)
+            folder = folder.deletingLastPathComponent().standardizedFileURL
+        }
+        return folders
     }
 
     /// Compares real paths, so folders reached through a symlink still match.
@@ -356,8 +383,41 @@ enum WorkspaceNavigator {
         }
         if let line { pendingLines[key] = line }
         if let anchor { pendingAnchors[key] = anchor }
-        NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
-            if let error { NSApp.presentError(error) }
+        // Files from the open folder become a tab of the folder's window.
+        let host = Workspace.shared.contains(url) ? frontmostWorkspaceSession : nil
+        if let host {
+            pendingSidebarTabs[key] = host.sidebarTab
+            Workspace.shared.reveal(url)
         }
+        NSDocumentController.shared.openDocument(withContentsOf: url, display: host == nil) { document, _, error in
+            if let error { NSApp.presentError(error) }
+            guard let host, let document else { return }
+            // Not displayed yet, so the window can join the tab group before it
+            // appears instead of flashing up on its own first.
+            if document.windowControllers.isEmpty {
+                document.makeWindowControllers()
+                if let window = document.windowControllers.first?.window, let hostWindow = host.window {
+                    hostWindow.addTabbedWindow(window, ordered: .above)
+                }
+            }
+            document.showWindows()
+        }
+    }
+
+    /// Sidebar tabs (Files, Search, …) carried over to a file opened as a tab.
+    private static var pendingSidebarTabs: [String: SidebarTab] = [:]
+
+    static func takePendingSidebarTab(for url: URL?) -> SidebarTab? {
+        guard let url else { return nil }
+        return pendingSidebarTabs.removeValue(forKey: url.standardizedFileURL.path)
+    }
+
+    /// The window in front showing a file from the open folder (its selected tab).
+    private static var frontmostWorkspaceSession: DocumentSession? {
+        let candidates = openSessions.filter { $0.isInWorkspace && $0.window?.isVisible == true }
+        for window in NSApp.orderedWindows {
+            if let session = candidates.first(where: { $0.window === window }) { return session }
+        }
+        return nil
     }
 }

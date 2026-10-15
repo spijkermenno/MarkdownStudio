@@ -79,6 +79,15 @@ struct WorkspaceScanTests {
     }
 }
 
+    /// Opening a file as a tab expands the folders above it in the shared tree.
+    @Test func findsFoldersToExpandForAFile() {
+        let root = URL(filePath: "/tmp/notes", directoryHint: .isDirectory)
+        let file = root.appendingPathComponent("a/b/c.md")
+        #expect(Workspace.folders(above: file, in: root).map(\.path) == ["/tmp/notes/a/b", "/tmp/notes/a"])
+        #expect(Workspace.folders(above: root.appendingPathComponent("top.md"), in: root).isEmpty)
+        #expect(Workspace.folders(above: URL(filePath: "/elsewhere/x.md"), in: root).isEmpty)
+    }
+
 @MainActor
 struct WebViewTests {
     @Test func convertsClipboardHTMLToMarkdown() async throws {

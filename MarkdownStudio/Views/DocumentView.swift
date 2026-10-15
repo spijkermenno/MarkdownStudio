@@ -215,8 +215,10 @@ struct DocumentView: View {
 
     /// Documents from the open folder show its tree; others fall back to the outline.
     private func showFolderTree(_ inside: Bool) {
+        session.updateTabBar()
         if inside {
-            session.sidebarTab = .files
+            // Opened as a tab: keep the sidebar the previous tab was showing.
+            session.sidebarTab = WorkspaceNavigator.takePendingSidebarTab(for: session.fileURL) ?? .files
             columnVisibility = .all
         } else if session.sidebarTab != .outline {
             session.sidebarTab = .outline
