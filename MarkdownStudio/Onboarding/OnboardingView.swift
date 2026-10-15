@@ -143,9 +143,11 @@ private struct ChoiceTile<Preview: View>: View {
 private struct WelcomeStep: View {
     var body: some View {
         VStack(spacing: 18) {
-            Image(nsImage: NSApp.applicationIconImage)
+            // The artwork fills the whole image (no margin like the system icon), so it's drawn a bit smaller.
+            Image(.appIcon)
                 .resizable()
-                .frame(width: 96, height: 96)
+                .frame(width: 84, height: 84)
+                .accessibilityHidden(true)
             Text("Welcome to Markdown Studio").font(.largeTitle.bold())
             Text("Let's set up a few things and then take a short tour. It takes about a minute, and you can change everything later in Settings.")
                 .multilineTextAlignment(.center)

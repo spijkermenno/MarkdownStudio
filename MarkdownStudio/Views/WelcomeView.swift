@@ -35,9 +35,11 @@ struct WelcomeView: View {
     private var actions: some View {
         VStack(spacing: 0) {
             Spacer()
-            Image(nsImage: NSApp.applicationIconImage)
+            // The artwork fills the whole image (no margin like the system icon), so it's drawn a bit smaller.
+            Image(.appIcon)
                 .resizable()
-                .frame(width: 96, height: 96)
+                .frame(width: 84, height: 84)
+                .accessibilityHidden(true)
             Text("Markdown Studio")
                 .font(.largeTitle.bold())
                 .padding(.top, 8)
