@@ -129,9 +129,10 @@ final class DocumentSession {
             guard let self, syncScroll, viewMode == .split else { return }
             editor.scroll(toLine: line, atBottom: atBottom)
         }
+        // ⌘-click in the preview. Only moves the editor when it's already on
+        // screen; reading in Preview mode never switches to the editor.
         preview.onReveal = { [weak self] line in
-            guard let self else { return }
-            if viewMode == .preview { viewMode = .split }
+            guard let self, viewMode == .split else { return }
             editor.reveal(line: line)
         }
         preview.onToggleTask = { [weak self] line in
@@ -279,7 +280,6 @@ final class DocumentSession {
         if tab == .search { searchFocusRequest += 1 }
     }
 
-    // MARK: - Tour
     // MARK: - Tabs
 
     /// Folder windows always show their tab bar, so it's clear files open as tabs.
@@ -310,6 +310,7 @@ final class DocumentSession {
     private static let workspaceTabbingIdentifier = "MarkdownStudio.workspace"
     @ObservationIgnored private var originalTabbingIdentifier: String?
 
+    // MARK: - Tour
 
     func startTour() {
         TourStep.activeSession = self

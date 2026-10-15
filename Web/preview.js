@@ -317,9 +317,16 @@
     }
   });
 
-  content.addEventListener('dblclick', function (event) {
-    const el = event.target.closest && event.target.closest('[data-line]');
-    if (el) post({ type: 'reveal', line: Number(el.getAttribute('data-line')) });
+  // Only ⌘-click jumps to the source: plain clicks and double-clicks are for
+  // selecting text and must never move the editor.
+  content.addEventListener('click', function (event) {
+    if (!event.metaKey || !event.target.closest) return;
+    if (event.target.closest('a, button, input')) return;
+    const el = event.target.closest('[data-line]');
+    if (el) {
+      event.preventDefault();
+      post({ type: 'reveal', line: Number(el.getAttribute('data-line')) });
+    }
   });
 
   function flash(el) {

@@ -30,7 +30,7 @@ struct TourStep {
                  systemImage: "square.and.pencil", target: .editor,
                  prepare: { $0.viewMode = .split }),
         TourStep(title: "See the result live",
-                 message: "The preview updates as you type and scrolls along with the editor. Double-click anything to jump to its source line, and click a checkbox to tick it in the text.",
+                 message: "The preview updates as you type and scrolls along with the editor. ⌘-click anything to jump to its source line, and click a checkbox to tick it in the text.",
                  systemImage: "eye", target: .preview,
                  prepare: { $0.viewMode = .split }),
         TourStep(title: "Find your way around",

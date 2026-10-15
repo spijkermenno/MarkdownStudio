@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import Testing
+import WebKit
 @testable import Markdown_Studio
 
 struct CompletionTests {
@@ -77,7 +78,6 @@ struct WorkspaceScanTests {
         #expect(results.count == 2)
         #expect(results.contains { $0.url.lastPathComponent == "ideas.md" && $0.line == 1 })
     }
-}
 
     /// Opening a file as a tab expands the folders above it in the shared tree.
     @Test func findsFoldersToExpandForAFile() {
@@ -87,6 +87,7 @@ struct WorkspaceScanTests {
         #expect(Workspace.folders(above: root.appendingPathComponent("top.md"), in: root).isEmpty)
         #expect(Workspace.folders(above: URL(filePath: "/elsewhere/x.md"), in: root).isEmpty)
     }
+}
 
 @MainActor
 struct WebViewTests {
@@ -107,6 +108,27 @@ struct WebViewTests {
         #expect(markdown.contains("| A | B |"))
         #expect(markdown.contains("**Docs bold**"))
         #expect(!markdown.contains("alert"))
+    }
+
+    /// Clicking or double-clicking text in the preview (e.g. to select a word)
+    /// must not jump to the editor; only ⌘-click does.
+    @Test func onlyCommandClickRevealsTheSource() async throws {
+        let preview = PreviewController()
+        var revealed: [Int] = []
+        preview.onReveal = { revealed.append($0) }
+        await preview.renderAndWait("# Title\n\nHello world\n")
+        func click(_ type: String, command: Bool) async throws {
+            _ = try await preview.webView.evaluateJavaScript("""
+            document.querySelector('#content p').dispatchEvent(new MouseEvent('\(type)', \
+            { bubbles: true, cancelable: true, detail: \(type == "dblclick" ? 2 : 1), metaKey: \(command) })); 0
+            """)
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        try await click("click", command: false)
+        try await click("dblclick", command: false)
+        #expect(revealed.isEmpty)
+        try await click("click", command: true)
+        #expect(revealed == [2])
     }
 
     @Test func detectsRichHTML() {

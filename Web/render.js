@@ -101,7 +101,7 @@
   // Plugins
 
   // Adds data-line / data-line-end attributes to block tokens so the preview
-  // can be mapped back to source lines (scroll sync, double-click to reveal).
+  // can be mapped back to source lines (scroll sync, ⌘-click to reveal).
   function sourceLinePlugin(md) {
     md.core.ruler.push('source_lines', function (state) {
       const offset = state.env.lineOffset || 0;
