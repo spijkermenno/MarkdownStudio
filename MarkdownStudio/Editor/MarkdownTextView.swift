@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import UniformTypeIdentifiers
 
@@ -12,6 +13,13 @@ final class MarkdownTextView: NSTextView {
 
     /// The document's folder, used to make dropped and pasted files relative.
     var documentURL: URL?
+
+    /// Converts clipboard HTML to Markdown; nil disables conversion.
+    var htmlConverter: ((String) async -> String?)?
+    /// Called after a paste was converted, so the UI can offer Undo.
+    var onPasteConverted: (() -> Void)?
+    /// Set by typing (and Delete), read by the autocomplete after the change.
+    var lastChangeWasTyping = false
 
     static let currentLineColor = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -38,11 +46,38 @@ final class MarkdownTextView: NSTextView {
         scrollRangeToVisible(selection)
     }
 
+    /// Applies an edit made on the user's behalf without moving their caret
+    /// (other than shifting it when text before it changed length).
+    func applyKeepingSelection(_ edit: TextEdit) {
+        let selection = selectedRange()
+        guard shouldChangeText(in: edit.range, replacementString: edit.replacement) else { return }
+        textStorage?.replaceCharacters(in: edit.range, with: edit.replacement)
+        didChangeText()
+        let delta = edit.replacement.utf16Length - edit.range.length
+        var location = selection.location
+        if edit.range.location < selection.location {
+            location = NSMaxRange(edit.range) <= selection.location ? selection.location + delta : edit.range.location
+        }
+        let length = (string as NSString).length
+        setSelectedRange(NSRange(location: min(max(0, location), length),
+                                 length: min(selection.length, max(0, length - location))))
+    }
+
+    /// Renumbers the ordered list around `location`, if there is one.
+    func renumberList(at location: Int) {
+        guard smartLists else { return }
+        let line = LineIndex(string).line(containing: min(location, (string as NSString).length))
+        if let edit = MarkdownEditing.renumberList(string, line: line, selection: selectedRange()) {
+            apply(edit)
+        }
+    }
+
     // MARK: - Smart typing
 
     override func insertNewline(_ sender: Any?) {
         if smartLists, let edit = MarkdownEditing.newline(string, selection: selectedRange()) {
             apply(edit)
+            renumberList(at: selectedRange().location)
             return
         }
         super.insertNewline(sender)
@@ -63,6 +98,7 @@ final class MarkdownTextView: NSTextView {
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        lastChangeWasTyping = true
         guard autoPairing, !hasMarkedText(), replacementRange.location == NSNotFound,
               let typed = insertString as? String, typed.utf16.count == 1
         else {
@@ -85,6 +121,8 @@ final class MarkdownTextView: NSTextView {
 
         // Step over an auto-inserted closing character.
         if selection.length == 0, Self.closers.contains(typed), next == typed {
+            // Only the caret moves, so no text change will consume the typing flag.
+            lastChangeWasTyping = false
             setSelectedRange(NSRange(location: selection.location + 1, length: 0))
             return
         }
@@ -104,8 +142,14 @@ final class MarkdownTextView: NSTextView {
     }
 
     override func deleteBackward(_ sender: Any?) {
+        lastChangeWasTyping = true
         let selection = selectedRange()
         let ns = string as NSString
+        // Joining or removing lines inside an ordered list renumbers it afterwards.
+        let removesLineBreak = selection.length > 0
+            ? ns.substring(with: selection).contains("\n")
+            : selection.location > 0 && ns.character(at: selection.location - 1) == 0x0A
+        defer { if removesLineBreak { renumberList(at: selectedRange().location) } }
         if autoPairing, selection.length == 0, selection.location > 0, selection.location < ns.length {
             let previous = ns.substring(with: NSRange(location: selection.location - 1, length: 1))
             let next = ns.substring(with: NSRange(location: selection.location, length: 1))
@@ -143,6 +187,27 @@ final class MarkdownTextView: NSTextView {
 
         if let urls = fileURLs(from: pasteboard), !urls.isEmpty {
             insertLinks(to: urls, at: selection)
+            return
+        }
+
+        // Rich text from browsers, Google Docs, Word or Notion becomes Markdown.
+        if let converter = htmlConverter, let html = pasteboard.string(forType: .html), Self.isRichHTML(html) {
+            let plain = pasteboard.string(forType: .string)
+            let textBefore = string
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let markdown = await converter(html)
+                // If the text changed while converting, paste at the current selection instead.
+                let range = self.string == textBefore ? selection : self.selectedRange()
+                guard let markdown, !markdown.isEmpty else {
+                    if let plain { self.insertText(plain, replacementRange: range) }
+                    return
+                }
+                self.apply(TextEdit(range: range, replacement: markdown,
+                                    selection: NSRange(location: range.location + markdown.utf16Length, length: 0)),
+                           actionName: "Paste")
+                if markdown != plain?.trimmingCharacters(in: .whitespacesAndNewlines) { self.onPasteConverted?() }
+            }
             return
         }
         super.paste(sender)
@@ -249,19 +314,4 @@ final class MarkdownTextView: NSTextView {
         return super.resignFirstResponder()
     }
 }
-
-enum MarkdownPaths {
-    /// A Markdown-ready (percent-encoded) path to `url`, relative to `directory` when possible.
-    nonisolated static func relativePath(to url: URL, from directory: URL?) -> String {
-        guard let directory else { return url.absoluteString }
-        let target = url.standardizedFileURL.pathComponents
-        let base = directory.standardizedFileURL.pathComponents
-        var common = 0
-        while common < min(target.count, base.count), target[common] == base[common] { common += 1 }
-        // Only the root in common: an absolute path is clearer.
-        guard common > 1 else { return url.absoluteString }
-        let ups = Array(repeating: "..", count: base.count - common)
-        let path = (ups + target[common...]).joined(separator: "/")
-        return path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-    }
-}
+#endif

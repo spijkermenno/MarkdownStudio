@@ -6,6 +6,7 @@
   const content = document.getElementById('content');
   const themeLink = document.getElementById('theme-css');
   const customStyle = document.getElementById('custom-css');
+  const status = document.getElementById('status');
 
   function post(message) {
     const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge;
@@ -25,9 +26,10 @@
     post({ type: 'log', level: 'error', message: e.message + ' (' + e.filename + ':' + e.lineno + ')' });
   });
 
-  let options = { theme: 'github', customCSS: '', math: true, mermaid: true, frontMatter: 'table' };
+  let options = { theme: 'github', customCSS: '', math: true, mermaid: true, frontMatter: 'table', lang: 'en', title: '' };
   let renderer = MDStudio.createRenderer(options);
   let lastMarkdown = null;
+  let lastLang = null;
 
   // ---------------------------------------------------------------------------
   // Sanitising
@@ -40,7 +42,9 @@
     if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
     if (url.slice(0, 2) === '//') return 'https:' + url;
     if (url.charAt(0) === '/') return 'mdstudio://file' + url;
-    return 'mdstudio://doc/' + url;
+    // The path goes in a query parameter: in the URL path the browser would
+    // collapse "../" against the root before the request reaches the app.
+    return 'mdstudio://doc/?p=' + encodeURIComponent(url);
   }
 
   DOMPurify.addHook('afterSanitizeAttributes', function (node) {
@@ -107,6 +111,24 @@
     });
   }
 
+  // Names the diagram for screen readers and keeps its source readable in a
+  // collapsed disclosure underneath.
+  function describeDiagram(container, source) {
+    const svg = container.querySelector('svg');
+    if (svg) {
+      svg.setAttribute('role', 'img');
+      if (!svg.hasAttribute('aria-labelledby')) svg.setAttribute('aria-label', MDStudio.diagramLabel(source));
+    }
+    const details = document.createElement('details');
+    details.className = 'diagram-source';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Diagram source';
+    const pre = document.createElement('pre');
+    pre.textContent = source;
+    details.append(summary, pre);
+    container.appendChild(details);
+  }
+
   // Diagrams are cached by source so typing elsewhere doesn't re-render them.
   function renderMermaid() {
     const blocks = Array.prototype.slice.call(content.querySelectorAll('pre.mermaid'));
@@ -117,12 +139,14 @@
         const container = pre.parentElement;
         if (mermaidCache.has(source)) {
           container.innerHTML = mermaidCache.get(source);
+          describeDiagram(container, source);
           return Promise.resolve();
         }
         const id = 'mermaid-' + (++mermaidCounter);
         return mermaid.render(id, source).then(function (result) {
           mermaidCache.set(source, result.svg);
           container.innerHTML = result.svg;
+          describeDiagram(container, source);
         }).catch(function (err) {
           const stray = document.getElementById('d' + id);
           if (stray) stray.remove();
@@ -147,6 +171,17 @@
       button.setAttribute('aria-label', 'Copy code');
       pre.appendChild(button);
     });
+  }
+
+  // Read out by VoiceOver through the role="status" region in preview.html.
+  function announce(message) {
+    status.textContent = '';
+    setTimeout(function () { status.textContent = message; }, 50);
+  }
+
+  function applyDocumentInfo(lang) {
+    document.documentElement.lang = lang || MDStudio.normalizeLang(options.lang) || 'en';
+    document.title = options.title || 'Preview';
   }
 
   // ---------------------------------------------------------------------------
@@ -259,8 +294,14 @@
       const code = target.parentElement.querySelector('code');
       post({ type: 'copy', text: code ? code.textContent : '' });
       target.textContent = 'Copied';
+      target.setAttribute('aria-label', 'Copied');
       target.classList.add('copied');
-      setTimeout(function () { target.textContent = 'Copy'; target.classList.remove('copied'); }, 1200);
+      announce('Code copied');
+      setTimeout(function () {
+        target.textContent = 'Copy';
+        target.setAttribute('aria-label', 'Copy code');
+        target.classList.remove('copied');
+      }, 1200);
       return;
     }
 
@@ -276,9 +317,16 @@
     }
   });
 
-  content.addEventListener('dblclick', function (event) {
-    const el = event.target.closest && event.target.closest('[data-line]');
-    if (el) post({ type: 'reveal', line: Number(el.getAttribute('data-line')) });
+  // Only ⌘-click jumps to the source: plain clicks and double-clicks are for
+  // selecting text and must never move the editor.
+  content.addEventListener('click', function (event) {
+    if (!event.metaKey || !event.target.closest) return;
+    if (event.target.closest('a, button, input')) return;
+    const el = event.target.closest('[data-line]');
+    if (el) {
+      event.preventDefault();
+      post({ type: 'reveal', line: Number(el.getAttribute('data-line')) });
+    }
   });
 
   function flash(el) {
@@ -307,6 +355,7 @@
       options = Object.assign({}, options, newOptions);
       themeLink.setAttribute('href', 'mdstudio://app/themes/' + options.theme + '.css');
       customStyle.textContent = options.customCSS || '';
+      applyDocumentInfo(lastLang);
       if (rendererChanged) {
         renderer = MDStudio.createRenderer(options);
         if (lastMarkdown !== null) return MDPreview.render(lastMarkdown, true);
@@ -321,6 +370,8 @@
       const scrollY = window.scrollY;
       const result = renderer.render(markdown);
       content.innerHTML = sanitize(result.html);
+      lastLang = result.lang;
+      applyDocumentInfo(lastLang);
       if (result.hasMath) renderMath();
       addCopyButtons();
       lineEntries = null;
@@ -361,9 +412,10 @@
       }
     },
 
-    exportHTML: function () {
+    exportHTML: function (exportOptions) {
       const clone = content.cloneNode(true);
       clone.querySelectorAll('.copy-button').forEach(function (b) { b.remove(); });
+      if (exportOptions && exportOptions.richText) clone.querySelectorAll('.diagram-source').forEach(function (d) { d.remove(); });
       clone.querySelectorAll('[data-line], [data-line-end]').forEach(function (el) {
         el.removeAttribute('data-line');
         el.removeAttribute('data-line-end');
@@ -378,7 +430,8 @@
         ['src', 'href', 'poster'].forEach(function (attr) {
           const value = el.getAttribute(attr);
           if (!value) return;
-          if (value.indexOf('mdstudio://doc/') === 0) el.setAttribute(attr, value.slice('mdstudio://doc/'.length));
+          if (value.indexOf('mdstudio://doc/?p=') === 0) el.setAttribute(attr, decodeURIComponent(value.slice('mdstudio://doc/?p='.length)));
+          else if (value.indexOf('mdstudio://doc/') === 0) el.setAttribute(attr, value.slice('mdstudio://doc/'.length));
           else if (value.indexOf('mdstudio://file/') === 0) el.setAttribute(attr, 'file:///' + value.slice('mdstudio://file/'.length));
         });
       });

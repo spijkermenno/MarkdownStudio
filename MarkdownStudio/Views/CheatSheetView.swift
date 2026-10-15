@@ -49,7 +49,9 @@ struct CheatSheetView: View {
             }
             .padding(24)
         }
+        #if os(macOS)
         .frame(minWidth: 520, minHeight: 400)
+        #endif
     }
 
     private func section(_ title: String, _ entries: [Entry]) -> some View {
