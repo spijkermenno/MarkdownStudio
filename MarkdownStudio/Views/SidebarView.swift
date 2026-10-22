@@ -1,0 +1,311 @@
+import SwiftUI
+
+enum SidebarTab: String, CaseIterable, Identifiable {
+    case outline, files, search
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .outline: "Outline"
+        case .files: "Files"
+        case .search: "Search"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .outline: "list.bullet.indent"
+        case .files: "folder"
+        case .search: "magnifyingglass"
+        }
+    }
+}
+
+#if os(macOS)
+struct SidebarView: View {
+    @Bindable var session: DocumentSession
+
+    var body: some View {
+        if session.isInWorkspace {
+            VStack(spacing: 0) {
+                Picker("Sidebar", selection: $session.sidebarTab) {
+                    ForEach(SidebarTab.allCases) { tab in
+                        // Icon only on screen; VoiceOver and Voice Control use the title.
+                        Label(tab.title, systemImage: tab.systemImage)
+                            .labelStyle(.iconOnly)
+                            .accessibilityLabel(tab.title)
+                            .help(tab.title)
+                            .tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+
+                switch session.sidebarTab {
+                case .outline: OutlineView(session: session)
+                case .files: FilesView(session: session)
+                case .search: FolderSearchView(session: session)
+                }
+            }
+        } else {
+            // A single file: just its outline, no folder tree.
+            OutlineView(session: session)
+        }
+    }
+}
+
+// MARK: - Files
+
+struct FilesView: View {
+    let session: DocumentSession
+    private var workspace: Workspace { Workspace.shared }
+    @State private var renaming: FileNode?
+    @State private var newName = ""
+
+    var body: some View {
+        if let root = workspace.rootURL {
+            List {
+                Section {
+                    if workspace.tree.isEmpty && !workspace.isLoading {
+                        Text("No Markdown files in this folder").foregroundStyle(.secondary)
+                    }
+                    nodes(workspace.tree)
+                } header: {
+                    HStack {
+                        Text(root.lastPathComponent).lineLimit(1)
+                        Spacer()
+                        folderMenu(root)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .dropDestination(for: URL.self) { urls, _ in
+                urls.forEach { workspace.move($0, to: root.appendingPathComponent($0.lastPathComponent)) }
+                return true
+            }
+            .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Name", text: $newName)
+                Button("Rename") {
+                    if let node = renaming { workspace.rename(node.url, to: newName) }
+                    renaming = nil
+                }
+                Button("Cancel", role: .cancel) { renaming = nil }
+            } message: {
+                Text("Enter a new name for “\(renaming?.name ?? "")”.")
+            }
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "folder").font(.largeTitle).foregroundStyle(.secondary)
+                Text("Open a folder to browse its Markdown files here.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                Button("Open Folder…") { workspace.chooseFolder() }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Like OutlineGroup, but the expanded folders live in the workspace, so
+    /// every tab of the folder window shows the tree the same way.
+    private func nodes(_ nodes: [FileNode]) -> AnyView {
+        AnyView(ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: expansion(of: node.url)) {
+                    self.nodes(children)
+                } label: {
+                    row(node)
+                }
+            } else {
+                row(node)
+            }
+        })
+    }
+
+    private func expansion(of folder: URL) -> Binding<Bool> {
+        let key = folder.standardizedFileURL
+        return Binding(
+            get: { workspace.expandedFolders.contains(key) },
+            set: { expanded in
+                if expanded { workspace.expandedFolders.insert(key) } else { workspace.expandedFolders.remove(key) }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func rowLabel(_ node: FileNode, isCurrent: Bool) -> some View {
+        Label {
+            Text(node.isDirectory ? node.name : (node.name as NSString).deletingPathExtension)
+                .fontWeight(isCurrent ? .semibold : .regular)
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: node.isDirectory ? "folder" : "doc.text")
+                .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private func row(_ node: FileNode) -> some View {
+        let isCurrent = session.fileURL?.standardizedFileURL == node.url.standardizedFileURL
+        return Group {
+            if node.isDirectory {
+                rowLabel(node, isCurrent: false)
+            } else {
+                // A button, so the keyboard, VoiceOver and Voice Control can open it too.
+                Button { WorkspaceNavigator.open(node.url) } label: { rowLabel(node, isCurrent: isCurrent) }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                    .accessibilityHint(isCurrent ? "Open in this tab" : "Opens the file in a tab")
+            }
+        }
+        .help(workspace.relativePath(of: node.url))
+        .draggable(node.url)
+        .dropDestination(for: URL.self) { urls, _ in
+            let folder = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+            urls.forEach { workspace.move($0, to: folder.appendingPathComponent($0.lastPathComponent)) }
+            return true
+        }
+        .contextMenu {
+            let folder = node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+            Button("New File") { workspace.createFile(in: folder) }
+            Button("New Folder") { workspace.createFolder(in: folder) }
+            Divider()
+            Button("Rename…") {
+                newName = node.isDirectory ? node.name : (node.name as NSString).deletingPathExtension
+                renaming = node
+            }
+            // Moving without dragging, for keyboard, switch and Voice Control users.
+            if let root = workspace.rootURL {
+                let targets = Workspace.moveTargets(for: node.url, root: root, tree: workspace.tree)
+                Menu("Move To") {
+                    ForEach(targets, id: \.self) { folder in
+                        Button(folder.standardizedFileURL == root.standardizedFileURL
+                               ? "\(root.lastPathComponent) (top level)" : workspace.relativePath(of: folder)) {
+                            workspace.move(node.url, to: folder.appendingPathComponent(node.url.lastPathComponent))
+                        }
+                    }
+                }
+                .disabled(targets.isEmpty)
+            }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
+            Divider()
+            Button("Move to Trash", role: .destructive) { workspace.trash(node.url) }
+        }
+    }
+
+    private func folderMenu(_ root: URL) -> some View {
+        Menu {
+            Button("New File") { workspace.createFile(in: root) }
+            Button("New Folder") { workspace.createFolder(in: root) }
+            Divider()
+            Button("Open Different Folder…") { workspace.chooseFolder() }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([root]) }
+            Button("Close Folder") { workspace.close() }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Folder actions")
+        .help("Folder actions")
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+}
+
+// MARK: - Search
+
+struct FolderSearchView: View {
+    let session: DocumentSession
+    @State private var results: [SearchResult] = []
+    @State private var isSearching = false
+    @FocusState private var fieldFocused: Bool
+    /// Shared, so the search is still there in the tab a result opens in.
+    @Bindable private var workspace = Workspace.shared
+    private var query: String { workspace.searchQuery }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TextField("Find in Folder", text: $workspace.searchQuery)
+                .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+                .disabled(workspace.rootURL == nil)
+            if workspace.rootURL == nil {
+                VStack(spacing: 12) {
+                    Text("Open a folder to search all of its Markdown files.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    Button("Open Folder…") { workspace.chooseFolder() }
+                }
+                .padding()
+                .frame(maxHeight: .infinity)
+            } else if results.isEmpty {
+                Text(query.count < 2 ? "Type at least two characters" : (isSearching ? "Searching…" : "No results"))
+                    .foregroundStyle(.secondary)
+                    .frame(maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(grouped, id: \.0) { url, matches in
+                        Section(workspace.relativePath(of: url)) {
+                            ForEach(matches) { result in
+                                Button { WorkspaceNavigator.open(result.url, line: result.line) } label: {
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text("\(result.line + 1)")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                            .frame(minWidth: 22, alignment: .trailing)
+                                        Text(highlighted(result.text)).lineLimit(2)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Line \(result.line + 1): \(result.text)")
+                                .accessibilityAddTraits(.isButton)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+            }
+        }
+        .task(id: query) {
+            guard query.count >= 2 else { results = []; return }
+            isSearching = true
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            let files = workspace.files
+            let needle = query
+            let found = await Task.detached(priority: .userInitiated) { Workspace.search(needle, in: files) }.value
+            guard !Task.isCancelled else { return }
+            results = found
+            isSearching = false
+        }
+        .onChange(of: session.searchFocusRequest, initial: true) { _, _ in
+            DispatchQueue.main.async { fieldFocused = true }
+        }
+    }
+
+    private var grouped: [(URL, [SearchResult])] {
+        var order: [URL] = []
+        var groups: [URL: [SearchResult]] = [:]
+        for result in results {
+            if groups[result.url] == nil { order.append(result.url) }
+            groups[result.url, default: []].append(result)
+        }
+        return order.map { ($0, groups[$0]!) }
+    }
+
+    private func highlighted(_ text: String) -> AttributedString {
+        var attributed = AttributedString(text)
+        if let range = attributed.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) {
+            attributed[range].font = .body.bold()
+            attributed[range].backgroundColor = .yellow.opacity(0.35)
+        }
+        return attributed
+    }
+}
+#endif

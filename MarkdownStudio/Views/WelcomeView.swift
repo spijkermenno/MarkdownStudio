@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// Shown at launch: create a document, open one, or pick a recent file.
@@ -18,10 +19,15 @@ struct WelcomeView: View {
             recentFiles
                 .frame(width: 300)
         }
-        .frame(height: 400)
+        .frame(height: 500)
         .onAppear {
             WelcomeWindow.openWindow = openWindow
             refresh()
+            // First launch: the setup and tour replace the Welcome window.
+            if Onboarding.shouldPresentAutomatically() {
+                openWindow(id: Onboarding.windowID)
+                dismissWindow(id: WelcomeWindow.id)
+            }
         }
     }
 
@@ -30,9 +36,11 @@ struct WelcomeView: View {
     private var actions: some View {
         VStack(spacing: 0) {
             Spacer()
-            Image(nsImage: NSApp.applicationIconImage)
+            // The artwork fills the whole image (no margin like the system icon), so it's drawn a bit smaller.
+            Image(.appIcon)
                 .resizable()
-                .frame(width: 96, height: 96)
+                .frame(width: 84, height: 84)
+                .accessibilityHidden(true)
             Text("Markdown Studio")
                 .font(.largeTitle.bold())
                 .padding(.top, 8)
@@ -44,9 +52,40 @@ struct WelcomeView: View {
                 actionButton("New Document", systemImage: "doc.badge.plus", shortcut: "⌘N") {
                     newDocument { MarkdownDocument() }
                 }
-                actionButton("Open Existing File…", systemImage: "folder", shortcut: "⌘O") {
+                actionButton("Open Existing File…", systemImage: "doc", shortcut: "⌘O") {
                     NSDocumentController.shared.openDocument(nil)
                 }
+                actionButton("Open Folder…", systemImage: "folder", shortcut: "⌥⌘O") {
+                    Workspace.shared.chooseFolder()
+                }
+                if let folder = Workspace.shared.rootURL {
+                    actionButton("Continue in “\(folder.lastPathComponent)”", systemImage: "folder.badge.gearshape", shortcut: "") {
+                        Workspace.shared.showFolderWindow()
+                    }
+                }
+                Menu {
+                    ForEach(TemplateLibrary.all) { template in
+                        Button(template.name) {
+                            let text = template.filled()
+                            newDocument { MarkdownDocument(text: text) }
+                        }
+                    }
+                    Divider()
+                    Button("Open Templates Folder…") { TemplateLibrary.revealUserTemplatesFolder() }
+                } label: {
+                    HStack {
+                        Image(systemName: "doc.on.doc").frame(width: 22)
+                        Text("New from Template")
+                        Spacer()
+                        Image(systemName: "chevron.down").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(CardButtonStyle())
+                .menuIndicator(.hidden)
             }
             .padding(.top, 28)
             .padding(.horizontal, 36)
@@ -76,8 +115,8 @@ struct WelcomeView: View {
             HStack {
                 Image(systemName: systemImage)
                     .frame(width: 22)
-                Text(title)
-                Spacer()
+                Text(title).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
                 Text(shortcut).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
@@ -85,8 +124,9 @@ struct WelcomeView: View {
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+        .buttonStyle(CardButtonStyle())
+        .accessibilityLabel(title)
+        .accessibilityHint(shortcut.isEmpty ? "" : "Shortcut \(shortcut)")
     }
 
     // MARK: - Right: recent files
@@ -106,10 +146,18 @@ struct WelcomeView: View {
                 Spacer()
             } else {
                 List(recents, id: \.self) { url in
-                    RecentFileRow(url: url)
-                        .contentShape(Rectangle())
-                        .onTapGesture { open(url) }
-                        .help(url.path)
+                    // A button, so recent files open from the keyboard and with VoiceOver too.
+                    Button { open(url) } label: {
+                        RecentFileRow(url: url)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(url.lastPathComponent)
+                    .accessibilityValue((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                    .accessibilityAddTraits(.isButton)
+                    .help(url.path)
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
@@ -123,7 +171,10 @@ struct WelcomeView: View {
 
     private func refresh() {
         recents = Array(NSDocumentController.shared.recentDocumentURLs
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .filter { url in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
+            }
             .prefix(5))
         isDefaultApp = DefaultAppHandler.isDefault
     }
@@ -168,3 +219,4 @@ private struct RecentFileRow: View {
         .padding(.vertical, 3)
     }
 }
+#endif

@@ -12,6 +12,8 @@ struct GoToLineView: View {
             TextField("Line number (1–\(session.editor.lineIndex.lineCount))", text: $line)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
+                .accessibilityLabel("Line number")
+                .accessibilityHint("Enter a number from 1 to \(session.editor.lineIndex.lineCount)")
                 .onSubmit(go)
             HStack {
                 Spacer()

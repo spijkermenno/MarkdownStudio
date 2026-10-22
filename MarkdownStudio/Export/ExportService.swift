@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import UniformTypeIdentifiers
 import WebKit
 
@@ -11,9 +13,12 @@ enum ExportService {
         var title: String
         var documentURL: URL?
         var configuration: PreviewConfiguration
+        #if os(macOS)
         var window: NSWindow?
+        #endif
     }
 
+    #if os(macOS)
     // MARK: - Actions
 
     static func exportHTML(_ source: Source) async {
@@ -66,18 +71,25 @@ enum ExportService {
         pasteboard.setString(html, forType: .html)
         pasteboard.setString(attributed.string, forType: .string)
     }
+    #endif
 
     // MARK: - HTML
 
     static func renderedBody(_ source: Source) async -> String {
+        await renderedDocument(source).body
+    }
+
+    /// The body HTML and the document's language.
+    private static func renderedDocument(_ source: Source, forRichText: Bool = false) async -> (body: String, lang: String) {
         let renderer = await OffscreenRenderer.render(source)
         defer { renderer.close() }
-        return await renderer.preview.exportedBodyHTML()
+        let body = await renderer.preview.exportedBodyHTML(forRichText: forRichText)
+        return (body, await renderer.preview.documentLanguage())
     }
 
     /// A self-contained HTML document with the theme's CSS inlined.
     static func standaloneHTML(_ source: Source, forRichText: Bool = false) async -> String {
-        let body = await renderedBody(source)
+        let (body, lang) = await renderedDocument(source, forRichText: forRichText)
         let web = PreviewSchemeHandler.webRoot
         func css(_ path: String) -> String {
             (try? String(contentsOf: web.appending(path: path), encoding: .utf8)) ?? ""
@@ -110,7 +122,7 @@ enum ExportService {
         }
         return """
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="\(escape(lang).replacingOccurrences(of: "\"", with: "&quot;"))">
         <head>
         \(head)
         </head>
@@ -127,6 +139,7 @@ enum ExportService {
         string.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
     }
 
+    #if os(macOS)
     // MARK: - Helpers
 
     private static func printInfo() -> NSPrintInfo {
@@ -163,8 +176,10 @@ enum ExportService {
         let alert = NSAlert(error: error)
         if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
     }
+    #endif
 }
 
+#if os(macOS)
 /// A preview web view in an invisible window, used for export and printing.
 final class OffscreenRenderer {
     let preview = PreviewController()
@@ -185,24 +200,30 @@ final class OffscreenRenderer {
 
     static func render(_ source: ExportService.Source) async -> OffscreenRenderer {
         let renderer = OffscreenRenderer(documentURL: source.documentURL)
+        renderer.preview.documentTitle = source.title
         renderer.preview.configure(source.configuration)
         await renderer.preview.renderAndWait(source.markdown)
         return renderer
     }
 
     func print(info: NSPrintInfo, showPanels: Bool, title: String, hostWindow: NSWindow?) async {
-        let operation = preview.webView.printOperation(with: info)
+        await Self.runPrint(webView: preview.webView, info: info, showPanels: showPanels, title: title, hostWindow: hostWindow ?? window)
+    }
+
+    /// Prints a web view (to paper or, with `.save`, to a PDF) and waits until done.
+    static func runPrint(webView: WKWebView, info: NSPrintInfo, showPanels: Bool, title: String, hostWindow: NSWindow) async {
+        let operation = webView.printOperation(with: info)
         operation.showsPrintPanel = showPanels
         operation.showsProgressPanel = showPanels
         operation.jobTitle = title
-        operation.view?.frame = preview.webView.bounds
+        operation.view?.frame = webView.bounds
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let delegate = PrintDelegate { delegate in
                 Self.printDelegates.remove(delegate)
                 continuation.resume()
             }
             Self.printDelegates.insert(delegate)
-            operation.runModal(for: hostWindow ?? window, delegate: delegate,
+            operation.runModal(for: hostWindow, delegate: delegate,
                                didRun: #selector(PrintDelegate.printOperationDidRun(_:success:contextInfo:)), contextInfo: nil)
         }
     }
@@ -227,3 +248,4 @@ private final class PrintDelegate: NSObject, @unchecked Sendable {
         }
     }
 }
+#endif

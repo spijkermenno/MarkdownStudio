@@ -1,4 +1,3 @@
-import AppKit
 import WebKit
 import os
 
@@ -21,7 +20,8 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
     var onScroll: ((_ line: Double, _ atBottom: Bool) -> Void)?
     var onReveal: ((Int) -> Void)?
     var onToggleTask: ((Int) -> Void)?
-    var onOpenDocument: ((URL) -> Void)?
+    /// Opens a linked Markdown document, optionally at a heading anchor.
+    var onOpenDocument: ((URL, String?) -> Void)?
 
     var documentDirectory: URL? {
         get { schemeHandler.documentDirectory }
@@ -32,6 +32,28 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         didSet { webView.pageZoom = zoom }
     }
 
+    /// The document's name, used as the web page title so VoiceOver can tell
+    /// previews of different documents apart.
+    var documentTitle = "" {
+        didSet {
+            guard documentTitle != oldValue, isReady else { return }
+            Task { await self.call("return await MDPreview.configure(options)", ["options": ["title": documentTitle]]) }
+        }
+    }
+
+    /// The language the preview is read in when the front matter has no
+    /// `lang:` key: the user's first preferred language.
+    static var defaultLanguage: String {
+        Locale.preferredLanguages.first ?? "en"
+    }
+
+    private var scriptOptions: [String: Any] {
+        var options = configuration.javaScriptValue
+        options["lang"] = Self.defaultLanguage
+        options["title"] = documentTitle
+        return options
+    }
+
     override init() {
         let config = WKWebViewConfiguration()
         config.setURLSchemeHandler(schemeHandler, forURLScheme: PreviewSchemeHandler.scheme)
@@ -40,13 +62,20 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         config.preferences.shouldPrintBackgrounds = true
         let contentController = WKUserContentController()
         config.userContentController = contentController
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 800), configuration: config)
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 600, height: 800), configuration: config)
         super.init()
 
         contentController.add(WeakScriptMessageHandler(self), name: "bridge")
         webView.navigationDelegate = self
+        #if os(macOS)
         webView.allowsMagnification = false
         webView.setValue(false, forKey: "drawsBackground")
+        #else
+        // The page draws its own background, so the editor's shows through while loading.
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        #endif
         #if DEBUG
         webView.isInspectable = true
         #endif
@@ -65,7 +94,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         self.configuration = configuration
         configured = true
         guard isReady else { return }
-        Task { await self.call("return await MDPreview.configure(options)", ["options": configuration.javaScriptValue]) }
+        Task { await self.call("return await MDPreview.configure(options)", ["options": scriptOptions]) }
     }
 
     /// Renders `markdown`. Calls are coalesced: while a render is in flight only
@@ -105,9 +134,21 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         webView.evaluateJavaScript("MDPreview.revealLine(\(line))", completionHandler: nil)
     }
 
-    /// The rendered body HTML with preview-only markup removed.
-    func exportedBodyHTML() async -> String {
-        await call("return MDPreview.exportHTML()") ?? ""
+    /// Converts clipboard HTML to Markdown (Turndown, see Web/paste.js).
+    func markdown(fromHTML html: String) async -> String? {
+        await waitUntilReady()
+        return await call("return MDPaste.convert(html)", ["html": html])
+    }
+
+    /// The rendered body HTML with preview-only markup removed. Rich text
+    /// can't collapse a <details>, so it leaves out the diagram source.
+    func exportedBodyHTML(forRichText: Bool = false) async -> String {
+        await call("return MDPreview.exportHTML(options)", ["options": ["richText": forRichText]]) ?? ""
+    }
+
+    /// The language the rendered document is in (front matter or default).
+    func documentLanguage() async -> String {
+        await call("return document.documentElement.lang") ?? "en"
     }
 
     /// Runs `body` as an async JavaScript function; returns string results.
@@ -140,8 +181,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         case "toggleTask":
             if let line = body["line"] as? Int { onToggleTask?(line) }
         case "copy":
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(body["text"] as? String ?? "", forType: .string)
+            Platform.copy(body["text"] as? String ?? "")
         case "log":
             let text = body["message"] as? String ?? ""
             if body["level"] as? String == "error" {
@@ -157,7 +197,7 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
     private func pageDidLoad() {
         isReady = true
         Task {
-            await self.call("return await MDPreview.configure(options)", ["options": configuration.javaScriptValue])
+            await self.call("return await MDPreview.configure(options)", ["options": scriptOptions])
             await self.flush()
             let waiters = self.readyWaiters
             self.readyWaiters.removeAll()
@@ -175,12 +215,12 @@ final class PreviewController: NSObject, WKScriptMessageHandler, WKNavigationDel
         if let fileURL = schemeHandler.fileURL(for: url) {
             let isMarkdown = ["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "txt"].contains(fileURL.pathExtension.lowercased())
             if isMarkdown, let onOpenDocument {
-                onOpenDocument(fileURL)
+                onOpenDocument(fileURL, PreviewSchemeHandler.fragment(in: url))
             } else {
-                NSWorkspace.shared.open(fileURL)
+                Platform.open(fileURL)
             }
         } else if let scheme = url.scheme?.lowercased(), ["http", "https", "mailto", "ftp", "tel"].contains(scheme) {
-            NSWorkspace.shared.open(url)
+            Platform.open(url)
         }
         return .cancel
     }

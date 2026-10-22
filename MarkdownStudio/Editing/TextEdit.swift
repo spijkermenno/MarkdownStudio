@@ -3,7 +3,7 @@ import Foundation
 /// A single replacement in the editor's text, plus the selection to apply
 /// afterwards. All ranges are UTF-16 based so they map directly onto
 /// `NSTextView` / `NSString`.
-nonisolated struct TextEdit: Equatable, Sendable {
+nonisolated struct TextEdit: Hashable, Sendable {
     var range: NSRange
     var replacement: String
     var selection: NSRange

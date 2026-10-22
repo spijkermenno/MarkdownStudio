@@ -1,0 +1,47 @@
+/* Presentation mode: 16:9 slides scaled to fit the screen. */
+html, body { height: 100%; overflow: hidden; }
+body { background: var(--slide-surround, #000); cursor: default; }
+#deck { position: fixed; inset: 0; }
+.slide {
+  position: absolute; left: 50%; top: 50%; width: 1280px; height: 720px;
+  transform-origin: center center; background: var(--bg); color: var(--fg);
+  display: none; overflow: hidden; border-radius: 2px;
+}
+.slide.active { display: flex; }
+.slide > .markdown-body {
+  max-width: none; width: 100%; margin: 0; padding: 64px 96px;
+  font-size: var(--slide-font, 34px); display: flex; flex-direction: column; justify-content: center;
+}
+.slide > .markdown-body > :first-child { margin-top: 0; }
+.slide.title-slide > .markdown-body { text-align: center; align-items: center; }
+.slide.title-slide h1 { font-size: 2.6em; border: 0; }
+.slide h1 { font-size: 1.9em; }
+.slide h2 { font-size: 1.5em; }
+.slide img { max-height: 520px; object-fit: contain; }
+.slide .copy-button { display: none; }
+.slide pre { font-size: 0.75em; }
+
+#progress { position: fixed; left: 0; right: 0; bottom: 0; height: 3px; background: transparent; }
+#progress-bar { height: 100%; width: 0; background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  #progress-bar { transition: width .2s ease; }
+}
+/* Headings get focus on each slide change for VoiceOver; no ring needed. */
+.slide [tabindex="-1"]:focus { outline: none; }
+
+#notes-panel {
+  position: fixed; left: 24px; right: 24px; bottom: 18px; max-height: 32vh; overflow: auto;
+  background: rgba(20, 22, 26, .88); color: #f2f4f7; border-radius: 12px; padding: 14px 18px;
+  font: 17px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 8px 30px rgba(0,0,0,.35);
+}
+.notes-meta { display: flex; justify-content: space-between; font: 600 13px/1.4 ui-monospace, Menlo, monospace; opacity: .75; margin-bottom: 6px; }
+#notes-text:empty::before { content: "No notes for this slide. Add <!-- notes: … --> to the slide."; opacity: .6; }
+
+@media print {
+  html, body { height: auto; overflow: visible; background: none; }
+  #deck { position: static; }
+  .slide { position: relative; left: 0; top: 0; transform: none !important; display: flex !important;
+           width: 1280px; height: 720px; page-break-after: always; break-after: page; border-radius: 0; }
+  #notes-panel, #progress { display: none !important; }
+  @page { size: 1280px 720px; margin: 0; }
+}
