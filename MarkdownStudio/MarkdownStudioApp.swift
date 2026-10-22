@@ -84,13 +84,14 @@ struct MarkdownStudioApp: App {
     }
     #else
     var body: some Scene {
-        // The document browser, with the app's name and a New Document button.
+        // The document browser, with the app's name, a New Document button and
+        // some Markdown snippets above the title.
         DocumentGroupLaunchScene("Markdown Studio") {
             NewDocumentButton("New Document")
         } background: {
-            LinearGradient(colors: [Color.accentColor.opacity(0.9), Color.accentColor.opacity(0.45)],
-                           startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            LaunchBackground()
+        } overlayAccessoryView: { geometry in
+            LaunchSnippets(geometry: geometry)
         }
 
         DocumentGroup(newDocument: { MarkdownDocument() }) { file in
