@@ -152,7 +152,7 @@ struct DocumentView: View {
                 OutlineView(session: session, onJump: {
                     // On iPhone the outline covers the document, so get out of the way.
                     if isCompact { isShowingOutline = false }
-                })
+                }, onDone: isCompact ? { isShowingOutline = false } : nil)
                 .inspectorColumnWidth(min: 220, ideal: 280, max: 400)
                 .presentationDetents([.medium, .large])
             }
@@ -346,7 +346,9 @@ struct DocumentView: View {
     #else
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
+        // Not .principal: in a document window that's the title, and taps there
+        // open the system's Rename/Move menu instead of reaching the picker.
+        ToolbarItem(placement: .primaryAction) {
             Picker("View Mode", selection: Binding(get: { displayedViewMode }, set: { session.viewMode = $0 })) {
                 ForEach(isCompact ? [ViewMode.editor, .preview] : ViewMode.allCases) { mode in
                     Label(mode.title, systemImage: mode.systemImage)
@@ -358,6 +360,10 @@ struct DocumentView: View {
             .pickerStyle(.segmented)
             .fixedSize()
         }
+        // The segmented control has its own background; without this it sits
+        // inside the toolbar's glass capsule, a pill drawn on top of a pill.
+        .sharedBackgroundVisibility(.hidden)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItemGroup(placement: .primaryAction) {
             if !isCompact {
                 if session.viewMode == .split {
