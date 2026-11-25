@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import UniformTypeIdentifiers
 
@@ -13,10 +14,13 @@ enum DefaultAppHandler {
         return types
     }
 
+    /// True when .md files open in Markdown Studio, including another copy of it
+    /// (for example a build run from Xcode next to the one in /Applications).
     static var isDefault: Bool {
-        let app = Bundle.main.bundleURL.standardizedFileURL
-        return markdownTypes.allSatisfy { type in
-            NSWorkspace.shared.urlForApplication(toOpen: type)?.standardizedFileURL == app
+        markdownTypes.allSatisfy { type in
+            guard let url = NSWorkspace.shared.urlForApplication(toOpen: type) else { return false }
+            return url.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL
+                || Bundle(url: url)?.bundleIdentifier == Bundle.main.bundleIdentifier
         }
     }
 
@@ -31,3 +35,4 @@ enum DefaultAppHandler {
         }
     }
 }
+#endif

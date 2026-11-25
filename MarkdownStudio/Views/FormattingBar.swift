@@ -4,7 +4,7 @@ import SwiftUI
 struct FormattingBar: View {
     let session: DocumentSession
 
-    private struct Item: Identifiable {
+    struct Item: Identifiable {
         let command: FormatCommand
         let title: String
         let symbol: String
@@ -12,7 +12,7 @@ struct FormattingBar: View {
         var id: String { title }
     }
 
-    private let groups: [[Item]] = [
+    static let groups: [[Item]] = [
         [
             Item(command: .bold, title: "Bold", symbol: "bold", shortcut: "⌘B"),
             Item(command: .italic, title: "Italic", symbol: "italic", shortcut: "⌘I"),
@@ -32,22 +32,25 @@ struct FormattingBar: View {
             Item(command: .image, title: "Image", symbol: "photo", shortcut: "⇧⌘I"),
             Item(command: .codeBlock, title: "Code Block", symbol: "curlybraces", shortcut: "⌥⌘K"),
             Item(command: .table, title: "Table", symbol: "tablecells", shortcut: ""),
+            Item(command: .tableOfContents, title: "Table of Contents", symbol: "list.bullet.rectangle", shortcut: ""),
             Item(command: .horizontalRule, title: "Horizontal Rule", symbol: "minus", shortcut: ""),
         ],
     ]
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(groups.indices, id: \.self) { index in
+            ForEach(Self.groups.indices, id: \.self) { index in
                 if index > 0 {
                     Divider().frame(height: 16).padding(.horizontal, 6)
                 }
-                ForEach(groups[index]) { item in
+                ForEach(Self.groups[index]) { item in
                     Button {
                         session.perform(item.command)
                     } label: {
+                        // At least 24 × 24 points (WCAG 2.5.8), clickable across the whole frame.
                         Image(systemName: item.symbol)
-                            .frame(width: 26, height: 22)
+                            .frame(width: 28, height: 26)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
                     .help(item.shortcut.isEmpty ? item.title : "\(item.title) (\(item.shortcut))")
@@ -57,7 +60,7 @@ struct FormattingBar: View {
             Spacer()
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .background(.bar)
     }
 }

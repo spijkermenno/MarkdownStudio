@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// Draws source line numbers beside the editor (TextKit 1).
@@ -50,8 +51,8 @@ final class LineNumberRulerView: NSRulerView {
         let caretLine = lineIndex.line(containing: textView.selectedRange().location)
         let origin = textView.textContainerOrigin
 
-        let normal: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
-        let current: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
+        let normal: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: MarkdownHighlighter.Colors.lineNumber]
+        let current: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
 
         func draw(_ line: Int, fragment: NSRect) {
             let label = "\(line + 1)" as NSString
@@ -82,3 +83,4 @@ final class LineNumberRulerView: NSRulerView {
         }
     }
 }
+#endif

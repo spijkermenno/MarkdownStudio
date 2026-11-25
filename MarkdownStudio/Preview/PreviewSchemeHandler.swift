@@ -48,12 +48,32 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
             return file.path.hasPrefix(root.path + "/") ? file : nil
         case "doc":
             guard let documentDirectory else { return nil }
-            return documentDirectory.appending(path: String(path.drop(while: { $0 == "/" }))).standardizedFileURL
+            let relative = Self.relativePath(in: url) ?? String(path.drop(while: { $0 == "/" }))
+            return documentDirectory.appending(path: relative).standardizedFileURL
         case "file":
             return URL(filePath: path).standardizedFileURL
         default:
             return nil
         }
+    }
+
+    /// The document-relative path of an `mdstudio://doc/?p=…` URL, without its
+    /// `#fragment` or `?query`, percent-decoded.
+    static func relativePath(in url: URL) -> String? {
+        guard let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "p" })?.value
+        else { return nil }
+        let pathPart = value.components(separatedBy: CharacterSet(charactersIn: "#?")).first ?? value
+        return pathPart.removingPercentEncoding ?? pathPart
+    }
+
+    /// The `#fragment` of a link, for jumping to a heading in another document.
+    static func fragment(in url: URL) -> String? {
+        if let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "p" })?.value,
+           let hash = value.firstIndex(of: "#") {
+            let fragment = String(value[value.index(after: hash)...])
+            return fragment.isEmpty ? nil : (fragment.removingPercentEncoding ?? fragment)
+        }
+        return url.fragment(percentEncoded: false)
     }
 
     /// Maps a preview URL back to a real file URL (used when following links).
